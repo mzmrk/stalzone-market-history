@@ -22,8 +22,6 @@ verification finish before the marker is uploaded. Restore validates markers
 newest-to-oldest and falls back when a newer generation is incomplete or
 damaged. Cleanup retains the newest and preceding valid generations, removes
 obsolete markers first, then deletes only data no retained marker references.
-Legacy fixed-name assets remain a generation-zero fallback until two immutable
-generations have been committed.
 
 After regional collection jobs finish, the workflow resolves the newest valid
 stable marker, verifies its archive digest, runs the canonical estimator, and

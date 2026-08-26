@@ -141,31 +141,33 @@ test("restore never mixes staging revisions and falls back when the newest check
   }
 });
 
-test("legacy fixed assets survive as rollback until a second immutable generation is committed", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "market-legacy-migration-"));
+test("stable publication retains two immutable generations and cleans older assets only after committing the marker", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "market-generation-retention-"));
   const backend = new FakeReleaseBackend();
   try {
-    const legacy = await regionFixture(directory, "legacy", "2026-08-24T12:00:00.000Z", 1);
-    const legacyName = `auction-history-eu-${legacy.digest.slice(0, 12)}.tar.gz`;
-    backend.put("market-history-latest", legacyName, await readFile(legacy.archive));
-    backend.put("market-history-latest", "latest-eu.json", Buffer.from(JSON.stringify({ schemaVersion: 1, region: "eu", capturedAt: "2026-08-24T12:00:00.000Z", archive: legacyName, sha256: legacy.digest })));
     const store = backend.store();
-    await store.restoreRegion({ region: "eu", workRoot: path.join(directory, "work") });
-    const first = await regionFixture(directory, "first", "2026-08-25T12:00:00.000Z", 2);
-    const second = await regionFixture(directory, "second", "2026-08-26T12:00:00.000Z", 3);
+    const first = await regionFixture(directory, "first", "2026-08-24T12:00:00.000Z", 1);
+    const second = await regionFixture(directory, "second", "2026-08-25T12:00:00.000Z", 2);
+    const third = await regionFixture(directory, "third", "2026-08-26T12:00:00.000Z", 3);
 
     await store.publishRegion({ ...first, region: "eu" });
-    assert.ok(backend.assetNames("market-history-latest").includes("latest-eu.json"));
-    const commandOffset = backend.commands.length;
     await store.publishRegion({ ...second, region: "eu" });
-    const secondPublish = backend.commands.slice(commandOffset);
-    const markerUpload = secondPublish.findIndex(
+    const firstMarkerName = backend.assetNames("market-history-latest")
+      .filter((name) => name.startsWith("generation-eu-"))
+      .find((name) => backend.jsonAsset("market-history-latest", name).generation === 1);
+    const firstMarker = backend.jsonAsset("market-history-latest", firstMarkerName);
+    const commandOffset = backend.commands.length;
+    await store.publishRegion({ ...third, region: "eu" });
+    const thirdPublish = backend.commands.slice(commandOffset);
+    const markerUpload = thirdPublish.findIndex(
       (command) => command[1] === "release" && command[2] === "upload" && path.basename(command[4]).startsWith("generation-eu-"),
     );
-    const firstDelete = secondPublish.findIndex((command) => command[1] === "api" && command.includes("DELETE"));
+    const firstDelete = thirdPublish.findIndex((command) => command[1] === "api" && command.includes("DELETE"));
     assert.ok(markerUpload >= 0 && firstDelete > markerUpload);
-    assert.doesNotMatch(secondPublish.flat().join(" "), /--clobber/);
-    assert.ok(!backend.assetNames("market-history-latest").includes("latest-eu.json"));
+    assert.doesNotMatch(thirdPublish.flat().join(" "), /--clobber/);
+    assert.ok(!backend.assetNames("market-history-latest").includes(firstMarkerName));
+    assert.ok(!backend.assetNames("market-history-latest").includes(firstMarker.archive.name));
+    assert.ok(!backend.assetNames("market-history-latest").includes(firstMarker.manifest.name));
     assert.equal(backend.assetNames("market-history-latest").filter((name) => name.startsWith("generation-eu-")).length, 2);
   } finally {
     await rm(directory, { recursive: true, force: true });

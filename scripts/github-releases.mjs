@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { access, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -153,7 +153,7 @@ export class GitHubReleaseStore {
       await writeFile(markerFile, markerText);
       await this.uploadVerifiedImmutable({ tag: this.stableTag, file: markerFile, digest: markerDigest, directory: temporary });
 
-      const current = { archivePath: archiveAsset, legacy: false, marker, markerName };
+      const current = { archivePath: archiveAsset, marker, markerName };
       const resolved = await this.downloadLatestStableGeneration({ directory: path.join(temporary, "committed"), region });
       if (!resolved || resolved.markerName !== markerName) {
         throw new Error(`Published stable generation did not resolve as current for region ${region}.`);
@@ -192,7 +192,7 @@ export class GitHubReleaseStore {
     assertNoGenerationFork(verifiedCandidates, region);
     verifiedCandidates.sort((left, right) => right.marker.generation - left.marker.generation || Date.parse(right.marker.createdAt) - Date.parse(left.marker.createdAt));
     if (verifiedCandidates.length > 0) return verifiedCandidates[0];
-    return this.downloadLegacyStable({ assets, directory, region });
+    return null;
   }
 
   async verifyStableCandidate(candidate, directory) {
@@ -210,32 +210,7 @@ export class GitHubReleaseStore {
     } catch {
       return null;
     }
-    return { ...candidate, archivePath, legacy: false };
-  }
-
-  async downloadLegacyStable({ assets, directory, region }) {
-    const pointerName = `latest-${region}.json`;
-    if (!assets.some((asset) => asset.name === pointerName)) return null;
-    if (!(await this.download(this.stableTag, pointerName, directory))) return null;
-    const pointer = JSON.parse(await readFile(path.join(directory, pointerName), "utf8"));
-    const archivePattern = new RegExp(`^auction-history-${region}-[a-f0-9]{12}\\.tar\\.gz$`);
-    if (pointer.schemaVersion !== 1 || pointer.region !== region || !archivePattern.test(pointer.archive) || !/^[a-f0-9]{64}$/.test(pointer.sha256)) {
-      throw new Error(`Legacy stable release pointer is invalid for region ${region}.`);
-    }
-    if (!(await this.download(this.stableTag, pointer.archive, directory))) return null;
-    const archivePath = path.join(directory, pointer.archive);
-    if (await hashFile(archivePath) !== pointer.sha256) return null;
-    return {
-      archivePath,
-      legacy: true,
-      markerName: pointerName,
-      marker: {
-        generation: 0,
-        createdAt: pointer.capturedAt ?? "1970-01-01T00:00:00.000Z",
-        archive: { name: pointer.archive, sha256: pointer.sha256 },
-        manifest: pointer.manifest ? { name: pointer.manifest, sha256: null } : null,
-      },
-    };
+    return { ...candidate, archivePath };
   }
 
   async restoreLatestStagingGeneration({ directory, region, regionDirectory, stable }) {
@@ -266,7 +241,7 @@ export class GitHubReleaseStore {
       await this.restoreStagingCandidate(verifiedCandidates[0], directory, regionDirectory);
       return verifiedCandidates[0];
     }
-    return this.restoreLegacyStaging({ assets, directory, region, regionDirectory });
+    return null;
   }
 
   async verifyStagingCandidate(candidate, directory) {
@@ -290,42 +265,6 @@ export class GitHubReleaseStore {
     }
   }
 
-  async restoreLegacyStaging({ assets, directory, region, regionDirectory }) {
-    const sessionName = `${region}--session.json`;
-    if (!assets.some((asset) => asset.name === sessionName)) return null;
-    await this.download(this.stagingTag, `${region}--*`, directory);
-    const session = JSON.parse(await readFile(path.join(directory, sessionName), "utf8"));
-    const artifactReferences = {};
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const match = entry.isFile() ? entry.name.match(new RegExp(`^${region}--(.+)\\.jsonl\\.gz$`)) : null;
-      if (!match) continue;
-      const artifactId = match[1];
-      const compressed = path.join(directory, entry.name);
-      artifactReferences[artifactId] = { name: entry.name, sha256: await hashFile(compressed) };
-      const destination = path.join(regionDirectory, "artifacts", `${artifactId}.jsonl`);
-      await mkdir(path.dirname(destination), { recursive: true });
-      await pipeline(createReadStream(compressed), createGunzip(), createWriteStream(destination));
-    }
-    for (const artifactId of session.completedArtifactIds ?? []) {
-      if (!artifactReferences[artifactId]) throw new Error(`Legacy staging session is missing ${artifactId}.`);
-    }
-    await copyFile(path.join(directory, sessionName), path.join(regionDirectory, "session.json"));
-    return {
-      markerName: sessionName,
-      marker: {
-        schemaVersion: 1,
-        kind: "legacy-staging",
-        region,
-        sessionId: checkpointSessionId(region, session.capturedAt),
-        revision: 0,
-        baseStableMarker: this.stableStates.get(region)?.markerName ?? null,
-        createdAt: session.updatedAt ?? session.capturedAt,
-        session,
-        artifacts: artifactReferences,
-      },
-    };
-  }
-
   async uploadVerifiedImmutable({ tag, file, digest, directory }) {
     const name = path.basename(file);
     const assets = await this.assetsForTag(tag);
@@ -343,7 +282,7 @@ export class GitHubReleaseStore {
     const keepMarkers = new Set(retained.map((generation) => generation.markerName));
     const keepData = new Set(retained.flatMap((generation) => [generation.marker.archive?.name, generation.marker.manifest?.name]).filter(Boolean));
     const assets = await this.assetsForTag(this.stableTag);
-    const markerAssets = assets.filter((asset) => asset.name === `latest-${region}.json` || asset.name.startsWith(`generation-${region}-`));
+    const markerAssets = assets.filter((asset) => asset.name.startsWith(`generation-${region}-`));
     for (const asset of markerAssets) if (!keepMarkers.has(asset.name)) await this.deleteAsset(asset.id);
     const dataAssets = assets.filter((asset) => asset.name.startsWith(`auction-history-${region}-`) || asset.name.startsWith(`manifest-${region}-`));
     for (const asset of dataAssets) if (!keepData.has(asset.name)) await this.deleteAsset(asset.id);
@@ -354,16 +293,16 @@ export class GitHubReleaseStore {
     const keepMarkers = new Set(retained.map((generation) => generation.markerName));
     const keepData = new Set(retained.flatMap((generation) => Object.values(generation.marker.artifacts).map((reference) => reference.name)));
     const assets = await this.assetsForTag(this.stagingTag);
-    const markers = assets.filter((asset) => asset.name === `${region}--session.json` || asset.name.startsWith(`checkpoint-session-${region}-`));
+    const markers = assets.filter((asset) => asset.name.startsWith(`checkpoint-session-${region}-`));
     for (const asset of markers) if (!keepMarkers.has(asset.name)) await this.deleteAsset(asset.id);
-    const data = assets.filter((asset) => asset.name.startsWith(`${region}--`) || asset.name.startsWith(`checkpoint-${region}-`));
+    const data = assets.filter((asset) => asset.name.startsWith(`checkpoint-${region}-`));
     for (const asset of data) if (!keepData.has(asset.name) && !keepMarkers.has(asset.name)) await this.deleteAsset(asset.id);
   }
 
   async clearStagingRegion(region) {
     if (!(await this.releaseExists(this.stagingTag))) return;
     for (const asset of await this.assetsForTag(this.stagingTag)) {
-      if (asset.name.startsWith(`${region}--`) || asset.name.startsWith(`checkpoint-${region}-`) || asset.name.startsWith(`checkpoint-session-${region}-`)) await this.deleteAsset(asset.id);
+      if (asset.name.startsWith(`checkpoint-${region}-`) || asset.name.startsWith(`checkpoint-session-${region}-`)) await this.deleteAsset(asset.id);
     }
     this.stagingStates.delete(region);
   }
@@ -446,9 +385,7 @@ function validateStagingMarker(marker, region) {
   if (JSON.stringify(Object.keys(marker.artifacts).sort()) !== JSON.stringify(completed)) throw new Error("staging artifact map does not exactly match completed artifacts");
   for (const [artifactId, reference] of Object.entries(marker.artifacts)) {
     validateAssetReference(reference);
-    if (reference.name !== `${region}--${artifactId}.jsonl.gz`) {
-      validateNamedReference(reference, new RegExp(`^checkpoint-${region}-${safeName(artifactId)}-([a-f0-9]{12})-\\d{8}T\\d{9}Z\\.jsonl\\.gz$`));
-    }
+    validateNamedReference(reference, new RegExp(`^checkpoint-${region}-${safeName(artifactId)}-([a-f0-9]{12})-\\d{8}T\\d{9}Z\\.jsonl\\.gz$`));
   }
   return marker;
 }
