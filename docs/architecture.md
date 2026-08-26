@@ -26,11 +26,10 @@ rate limit. Each completed artifact is checkpointed before the next artifact
 starts. An interrupted artifact may be downloaded again; previously completed
 artifacts in the same update session are skipped.
 
-The workflow creates one matrix job for every planned region and permits only
-one to run at a time. Scheduled runs select all regions; manual runs offer an
-`all`, EU, RU, NA, SEA, or NEA selector with `all` as the default. `fail-fast:
-false` isolates failures, so one regional job does not cancel the remaining
-matrix jobs.
+The workflow creates one matrix job for every selected region and permits only
+one to run at a time. Scheduled runs select all regions; manual runs expose one
+default-enabled checkbox per region. `fail-fast: false` isolates failures, so
+one regional job does not cancel the remaining matrix jobs.
 
 ## Consumer boundary
 
