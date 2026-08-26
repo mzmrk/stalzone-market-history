@@ -2,7 +2,9 @@
 
 ## Regional archive
 
-Each `auction-history-<region>.tar.gz` contains:
+Each `latest-<region>.json` release asset names the current
+`auction-history-<region>-<digest>.tar.gz`, manifest asset, and full SHA-256
+digest. The regional archive contains:
 
 ```text
 manifest.json
@@ -23,4 +25,3 @@ use the manifest instead of inferring completeness from filenames.
 The upstream API is beta and may change without notice. A schema change that
 introduces apparent personal identifiers is a publishing failure, not an
 automatic extension of this contract.
-

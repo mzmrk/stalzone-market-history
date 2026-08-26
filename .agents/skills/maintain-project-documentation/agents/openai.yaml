@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain Project Memory"
+  short_description: "Preserve compact project memory for future agents"
+  default_prompt: "Use $maintain-project-documentation after this change to read the complete core memory, synchronize durable knowledge, and verify it against authoritative source."

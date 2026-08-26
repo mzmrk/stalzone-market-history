@@ -16,7 +16,9 @@ minutes and reports current page, row, and rolling-window progress.
 After every artifact, the collector atomically writes local state and uploads
 the artifact plus session manifest to the draft staging release. At completion
 it validates and publishes the regional archive, then removes that region's
-staging assets.
+staging assets. [`scripts/collect-region.mjs`](../scripts/collect-region.mjs)
+is the supported entry point; `.work/` is disposable local state after a
+regional archive has been published.
 
 ## Recovery
 
@@ -29,3 +31,6 @@ Runs stop before GitHub's hard job timeout and request a continuation. Regions
 remain sequential; a failure in one region must not delete or replace another
 region's last valid archive.
 
+The weekly workflow starts with EU. An incomplete run dispatches itself for the
+same region; a complete run dispatches the next region. The repository must
+allow Actions to create workflow runs and write Release assets.

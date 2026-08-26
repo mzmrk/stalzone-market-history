@@ -5,11 +5,11 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "collect": "node scripts/collect-region.mjs",
     "test": "node --test",
-    "docs:check": "node /home/node/.codex/skills/maintain-project-documentation/scripts/validate-docs.mjs"
+    "docs:check": "node .agents/skills/maintain-project-documentation/scripts/validate-docs.mjs"
   },
   "engines": {
     "node": ">=22"
   }
 }
-

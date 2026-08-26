@@ -6,14 +6,14 @@ published as compressed GitHub Release assets.
 
 ## Data
 
-The rolling release will provide one archive per region:
+The rolling release provides a `latest-<region>.json` pointer for each region.
+It names the current content-addressed archive, manifest, and SHA-256 digest:
 
 ```text
-auction-history-eu.tar.gz
-auction-history-ru.tar.gz
-auction-history-na.tar.gz
-auction-history-sea.tar.gz
-auction-history-nea.tar.gz
+latest-eu.json
+auction-history-eu-<digest>.tar.gz
+manifest-eu-<digest>.json
+auction-history-eu-<digest>.sha256
 ```
 
 Each archive contains a manifest and one JSON Lines file per artifact. Sale
@@ -38,4 +38,3 @@ commit its client secret.
 
 Repository software is licensed under the [MIT License](LICENSE). API data is
 not relicensed under MIT; see [DATA-NOTICE.md](DATA-NOTICE.md).
-
