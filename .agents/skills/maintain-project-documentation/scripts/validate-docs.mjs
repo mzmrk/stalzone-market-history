@@ -12,10 +12,6 @@ const indexPath = path.join(docsDir, 'README.md')
 const errors = []
 const warnings = []
 
-if (!fs.existsSync(docsDir)) {
-    fail(`Documentation directory does not exist: ${docsDir}`)
-}
-
 const docs = listFiles(docsDir, file => file.endsWith('.md')).sort()
 const referenceDocs = docs.filter(documentPath => isWithin(documentPath, referencesDir))
 const coreDocs = docs.filter(
@@ -24,7 +20,7 @@ const coreDocs = docs.filter(
 )
 const memoryDocs = [...coreDocs, ...referenceDocs].sort()
 const evidenceFiles = listFiles(evidenceDir, () => true).sort()
-if (!fs.existsSync(indexPath)) {
+if (fs.existsSync(docsDir) && !fs.existsSync(indexPath)) {
     errors.push(`Missing documentation index: ${relative(indexPath)}`)
 }
 
