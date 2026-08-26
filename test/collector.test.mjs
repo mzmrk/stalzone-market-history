@@ -51,6 +51,29 @@ test("history acquisition retries a throttled page", async () => {
   assert.equal(rows.length, 1);
 });
 
+test("history acquisition respects the configured per-artifact page cap", async () => {
+  let requests = 0;
+  const rows = await fetchHistoryRows({
+    artifactId: "alpha",
+    cutoff: Date.parse("2025-08-26T00:00:00.000Z"),
+    credentials,
+    fetchImpl: async () => {
+      requests += 1;
+      return response({
+        total: 1_000,
+        prices: [{ price: requests, time: `2026-08-${26 - requests}T00:00:00.000Z` }],
+      });
+    },
+    maxPages: 3,
+    newestExistingSale: Number.NEGATIVE_INFINITY,
+    pageLimit: 1,
+    region: "eu",
+  });
+
+  assert.equal(requests, 3);
+  assert.equal(rows.length, 3);
+});
+
 test("soft runtime expiration abandons the partial artifact", async () => {
   await assert.rejects(
     fetchHistoryRows({

@@ -239,11 +239,14 @@ export class GitHubReleaseStore {
   async releaseId(tag) {
     const { stdout } = await this.execFile("gh", [
       "api",
-      `repos/${this.repository}/releases/tags/${tag}`,
+      "--paginate",
+      `repos/${this.repository}/releases?per_page=100`,
       "--jq",
-      ".id",
+      `.[] | select(.tag_name == ${JSON.stringify(tag)}) | .id`,
     ]);
-    return stdout.trim();
+    const id = stdout.trim();
+    if (!id) throw new Error(`GitHub release not found: ${tag}.`);
+    return id;
   }
 
   async releaseAssets(releaseId) {

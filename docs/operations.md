@@ -11,7 +11,9 @@ written to manifests, logs, fixtures, release assets, or Git history.
 A regional session has a fixed capture timestamp and cutoff. Existing artifact
 history is refreshed through the newest cached sale plus an overlap page;
 missing history is fetched through the cutoff. The default heartbeat is five
-minutes and reports current page, row, and rolling-window progress.
+minutes and reports current page, row, and rolling-window progress. Automated
+runs currently cap acquisition at three API pages per artifact; manifests
+record this cap so consumers can distinguish it from exhaustive history.
 
 After every artifact, the collector atomically writes local state and uploads
 the artifact plus session manifest to the draft staging release. At completion

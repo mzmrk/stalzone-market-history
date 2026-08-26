@@ -30,6 +30,7 @@ export async function collectRegion({
   listingUrl,
   log = console.log,
   maxRuntimeMs = Number.POSITIVE_INFINITY,
+  maxPagesPerArtifact = Number.POSITIVE_INFINITY,
   now = () => Date.now(),
   pageLimit = 200,
   progressEvery = 1,
@@ -38,13 +39,21 @@ export async function collectRegion({
   windowDays = 365,
 }) {
   const startedAt = now();
+  const recordedMaxPages = Number.isFinite(maxPagesPerArtifact) ? maxPagesPerArtifact : null;
   const regionDirectory = path.join(workRoot, region);
   const artifactsDirectory = path.join(regionDirectory, "artifacts");
   const sessionFile = path.join(regionDirectory, "session.json");
   await mkdir(artifactsDirectory, { recursive: true });
 
   const artifactIds = await loadArtifactIds(fetchImpl, listingUrl);
-  const session = await loadSession({ artifactIds, capturedAt, region, sessionFile, windowDays });
+  const session = await loadSession({
+    artifactIds,
+    capturedAt,
+    maxPagesPerArtifact: recordedMaxPages,
+    region,
+    sessionFile,
+    windowDays,
+  });
   const cutoff = Date.parse(session.cutoff);
   const sessionCapturedAt = Date.parse(session.capturedAt);
   const completed = new Set(session.completedArtifactIds);
@@ -81,6 +90,7 @@ export async function collectRegion({
           credentials,
           fetchImpl,
           newestExistingSale,
+          maxPages: maxPagesPerArtifact,
           pageLimit,
           region,
           shouldStop: () => now() - startedAt >= maxRuntimeMs,
@@ -116,7 +126,12 @@ export async function collectRegion({
       session.updatedAt = new Date(now()).toISOString();
       session.stopReason = null;
       session.lastError = null;
-      session.artifacts[artifactId] = summarizeArtifact({ existingRows, fetchedRows, mergedRows });
+      session.artifacts[artifactId] = summarizeArtifact({
+        existingRows,
+        fetchedRows,
+        maxPagesPerArtifact: recordedMaxPages,
+        mergedRows,
+      });
       await atomicJson(sessionFile, session);
       await checkpoint({ artifactFile, artifactId, region, session, sessionFile });
 
@@ -146,6 +161,7 @@ export async function fetchHistoryRows({
   credentials,
   fetchImpl,
   newestExistingSale,
+  maxPages = Number.POSITIVE_INFINITY,
   onPage = () => {},
   pageLimit,
   region,
@@ -195,7 +211,7 @@ export async function fetchHistoryRows({
     });
     if (shouldStop()) throw new TimeBudgetExceeded();
 
-    if (exhausted || fetchOneMoreAfterOverlap) break;
+    if (exhausted || fetchOneMoreAfterOverlap || pagesFetched >= maxPages) break;
     if (overlapsExisting) {
       fetchOneMoreAfterOverlap = true;
       continue;
@@ -257,9 +273,13 @@ async function loadArtifactIds(fetchImpl, listingUrl) {
   ].sort();
 }
 
-async function loadSession({ artifactIds, capturedAt, region, sessionFile, windowDays }) {
+async function loadSession({ artifactIds, capturedAt, maxPagesPerArtifact, region, sessionFile, windowDays }) {
   const existing = await readJson(sessionFile);
-  if (existing?.status === "in-progress" && existing.region === region) {
+  if (
+    existing?.status === "in-progress" &&
+    existing.region === region &&
+    existing.maxPagesPerArtifact === maxPagesPerArtifact
+  ) {
     const known = new Set(artifactIds);
     existing.artifactIds = artifactIds;
     existing.completedArtifactIds = existing.completedArtifactIds.filter((id) => known.has(id));
@@ -274,6 +294,7 @@ async function loadSession({ artifactIds, capturedAt, region, sessionFile, windo
     capturedAt: capturedAt.toISOString(),
     cutoff: new Date(capturedAt.getTime() - windowDays * dayMs).toISOString(),
     windowDays,
+    maxPagesPerArtifact,
     artifactIds,
     completedArtifactIds: [],
     artifacts: {},
@@ -304,6 +325,7 @@ async function buildManifest({ artifactIds, artifactsDirectory, session }) {
     capturedAt: session.capturedAt,
     cutoff: session.cutoff,
     windowDays: session.windowDays,
+    maxPagesPerArtifact: session.maxPagesPerArtifact,
     artifactCount: artifactIds.length,
     recordCount,
     artifacts,
@@ -311,10 +333,11 @@ async function buildManifest({ artifactIds, artifactsDirectory, session }) {
   };
 }
 
-function summarizeArtifact({ existingRows, fetchedRows, mergedRows }) {
+function summarizeArtifact({ existingRows, fetchedRows, maxPagesPerArtifact, mergedRows }) {
   return {
     existingRecords: existingRows.length,
     fetchedRecords: fetchedRows.length,
+    maxPagesPerArtifact,
     retainedRecords: mergedRows.length,
     newestSaleAt: formatTimestamp(mergedRows.at(0)),
     oldestSaleAt: formatTimestamp(mergedRows.at(-1)),

@@ -28,6 +28,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       MARKET_REGION: ${{ inputs.region || 'eu' }}
+      MARKET_MAX_PAGES_PER_ARTIFACT: 3
       STALZONE_CLIENT_ID: ${{ vars.STALZONE_CLIENT_ID }}
       STALZONE_CLIENT_SECRET: ${{ secrets.STALZONE_CLIENT_SECRET }}
     steps:

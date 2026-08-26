@@ -150,7 +150,7 @@ test("stable publishing verifies the versioned archive before moving its latest 
           const output = args[args.indexOf("--dir") + 1];
           await copyFileFromMemory(assets.get(name), path.join(output, name));
         }
-        if (args[0] === "api" && args.some((argument) => argument.includes("releases/tags/market-history-latest"))) {
+        if (args[0] === "api" && args.some((argument) => argument.includes("releases?per_page=100"))) {
           return { stdout: "1\n", stderr: "" };
         }
         if (args[0] === "api" && args.some((argument) => argument.includes("releases/1/assets"))) {
