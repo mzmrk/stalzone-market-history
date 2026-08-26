@@ -101,7 +101,7 @@ jobs:
       - name: Collect or resume region
         run: npm run collect -- "$MARKET_REGION"
 
-  record-activity:
+  publish-prices-and-status:
     needs: [plan, collect]
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-latest
@@ -118,16 +118,21 @@ jobs:
         with:
           node-version: 22
 
+      - name: Build canonical prices from stable archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npm run pricing:published
+
       - name: Record workflow activity
         env:
           MARKET_REGIONS: ${{ needs.plan.outputs.regions }}
           MARKET_RUN_RESULT: ${{ needs.collect.result }}
         run: node scripts/write-run-status.mjs status/last-run.json
 
-      - name: Commit operational status
+      - name: Commit prices and operational status
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add status/last-run.json
-          git commit -m "status: record scheduled market update (keep automation active)"
+          git add data/pricing-index.json status/last-run.json
+          git commit -m "pricing,status: publish refreshed market estimates (record update activity)"
           git push origin HEAD:main

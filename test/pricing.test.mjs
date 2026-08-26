@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { copyFile, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { buildPublishedPrices } from "../scripts/build-published-prices.mjs";
 import { mergePricingIndexes } from "../scripts/merge-pricing-indexes.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -72,6 +74,49 @@ test("pricing merge replaces refreshed regions and preserves the others", async 
 
   assert.equal(result.regions.eu.artifacts.alpha[0].median, 100);
   assert.equal(result.regions.ru.artifacts.alpha[0].median, 200);
+});
+
+test("published pricing verifies the stable archive and preserves regions not rebuilt", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "market-pricing-published-"));
+  const output = path.join(root, "pricing-index.json");
+  const archive = path.join(root, "auction-history-ru-123456789abc.tar.gz");
+  await writeFile(archive, "verified archive fixture");
+  const sha256 = createHash("sha256").update(await readFile(archive)).digest("hex");
+  const pointer = path.join(root, "latest-ru.json");
+  await writeFile(pointer, `${JSON.stringify({
+    schemaVersion: 1,
+    region: "ru",
+    archive: path.basename(archive),
+    sha256,
+  })}\n`);
+  await writeFile(output, `${JSON.stringify(bundle(regionalIndex("eu", 100)))}\n`);
+  const assets = new Map([[path.basename(archive), archive], [path.basename(pointer), pointer]]);
+  const store = {
+    stableTag: "market-history-latest",
+    async releaseExists() { return true; },
+    async download(_tag, name, destination) {
+      const source = assets.get(name);
+      if (!source) return false;
+      await copyFile(source, path.join(destination, name));
+      return true;
+    },
+  };
+
+  const refreshed = await buildPublishedPrices({
+    repository: "owner/repository",
+    outputFile: output,
+    regions: ["ru", "na"],
+    store,
+    async generateIndex({ outputFile: regionalOutput, region }) {
+      await writeFile(regionalOutput, `${JSON.stringify(regionalIndex(region, 200))}\n`);
+    },
+  });
+  const result = JSON.parse(await readFile(output, "utf8"));
+
+  assert.deepEqual(refreshed, ["ru"]);
+  assert.equal(result.regions.eu.artifacts.alpha[0].median, 100);
+  assert.equal(result.regions.ru.artifacts.alpha[0].median, 200);
+  assert.equal(result.regions.na, undefined);
 });
 
 function sale(endTime, price, additional = {}) {

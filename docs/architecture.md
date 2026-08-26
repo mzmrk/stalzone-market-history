@@ -21,6 +21,12 @@ downloads the new archive to verify its SHA-256 digest before replacing the
 small `latest-<region>.json` pointer or removing the previous regional assets.
 This prevents a failed replacement from destroying the last usable archive.
 
+After regional collection jobs finish, the workflow reads the stable release
+pointers, verifies each archive digest, runs the canonical estimator, and
+commits the merged price index with the operational status. A missing regional
+archive retains that region's prior index; an invalid pointer or digest fails
+closed.
+
 Collectors process one region at a time to avoid competing for the shared API
 rate limit. Each completed artifact is checkpointed before the next artifact
 starts. An interrupted artifact may be downloaded again; previously completed

@@ -23,6 +23,12 @@ staging assets. [`scripts/collect-region.mjs`](../scripts/collect-region.mjs)
 is the supported entry point; `.work/` is disposable local state after a
 regional archive has been published.
 
+After collection, `pricing:published` downloads only stable regional archives,
+verifies their release-pointer SHA-256 digests, rebuilds available regional
+estimates, and preserves prior estimates for unavailable regions. The final
+workflow commit includes both [`data/pricing-index.json`](../data/pricing-index.json)
+and the operational status.
+
 ## Recovery
 
 Restart the same region after interruption. The collector restores the latest
@@ -45,9 +51,9 @@ workflow run.
 
 The weekly workflow selects all five regions. Manual dispatch exposes five
 default-enabled region checkboxes; unselected regions are omitted from the
-matrix. After the matrix finishes, the workflow commits
-[`status/last-run.json`](../status/last-run.json) with the attempted regions and
-workflow result. Besides providing an operational heartbeat, this keeps the
+matrix. After the matrix finishes, the workflow commits the merged price index
+and [`status/last-run.json`](../status/last-run.json) with the attempted regions
+and workflow result. Besides providing an operational heartbeat, this keeps the
 public repository active so GitHub does not disable its scheduled workflow
 after 60 inactive days. The repository must allow Actions to write Release
 assets and the `main` branch.
