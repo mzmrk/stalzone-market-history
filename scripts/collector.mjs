@@ -93,6 +93,7 @@ export async function collectRegion({
           maxPages: maxPagesPerArtifact,
           pageLimit,
           region,
+          log,
           shouldStop: () => now() - startedAt >= maxRuntimeMs,
           onPage: ({ fetchedRecords, historyExhausted, oldestTimestamp, pagesFetched }) => {
             current.fetched = fetchedRecords;
@@ -162,6 +163,9 @@ export async function fetchHistoryRows({
   fetchImpl,
   newestExistingSale,
   maxPages = Number.POSITIVE_INFINITY,
+  inactivityTimeoutMs = 300_000,
+  log = console.warn,
+  now = () => Date.now(),
   onPage = () => {},
   pageLimit,
   region,
@@ -172,6 +176,7 @@ export async function fetchHistoryRows({
   let offset = 0;
   let pagesFetched = 0;
   let fetchOneMoreAfterOverlap = false;
+  let lastSuccessfulPageAt = now();
 
   while (true) {
     const url = new URL(`https://eapi.stalzone.com/${region.toUpperCase()}/auction/${artifactId}/history`);
@@ -181,8 +186,11 @@ export async function fetchHistoryRows({
 
     const response = await request({
       credentials,
+      deadline: lastSuccessfulPageAt + inactivityTimeoutMs,
       fetchImpl,
       label: `${artifactId} offset ${offset}`,
+      log,
+      now,
       requestDelay,
       url,
     });
@@ -190,8 +198,8 @@ export async function fetchHistoryRows({
     if (!Number.isInteger(parsed.total) || !Array.isArray(parsed.prices)) {
       throw new Error(`${artifactId} offset ${offset} returned an invalid history response.`);
     }
-
     for (const row of parsed.prices) validateAuctionRecord(row, artifactId);
+    lastSuccessfulPageAt = now();
     rows.push(...parsed.prices);
     pagesFetched += 1;
     const timestamps = parsed.prices.map(parseSoldAt);
@@ -345,23 +353,55 @@ function summarizeArtifact({ existingRows, fetchedRows, maxPagesPerArtifact, mer
   };
 }
 
-async function request({ credentials, fetchImpl, label, requestDelay, url }) {
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const response = await fetchImpl(url, {
-      headers: { "Client-Id": credentials.clientId, "Client-Secret": credentials.clientSecret },
-    });
+async function request({ credentials, deadline, fetchImpl, label, log, now, requestDelay, url }) {
+  let attempt = 0;
+  while (true) {
+    const remaining = deadline - now();
+    if (remaining <= 0) throw new InactivityTimeoutExceeded(label);
+
+    let response;
+    try {
+      response = await fetchImpl(url, {
+        headers: { "Client-Id": credentials.clientId, "Client-Secret": credentials.clientSecret },
+        signal: AbortSignal.timeout(remaining),
+      });
+    } catch (error) {
+      if (now() >= deadline || error?.name === "TimeoutError" || error?.name === "AbortError") {
+        throw new InactivityTimeoutExceeded(label);
+      }
+      attempt += 1;
+      const wait = Math.min(30_000, 1_000 * 2 ** Math.min(attempt - 1, 5));
+      log(`${label} network error; retrying after ${wait} ms.`);
+      await delayWithinDeadline({ deadline, label, now, requestDelay, wait });
+      continue;
+    }
     if (response.ok) return response;
     const body = await response.text();
     if (response.status !== 429 && response.status < 500) {
       throw new Error(`${label} failed (${response.status}): ${body.slice(0, 200)}`);
     }
+    attempt += 1;
     const retryAfterHeader = response.headers.get("retry-after");
     const retryAfter = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
-    await requestDelay(
-      Number.isFinite(retryAfter) ? retryAfter * 1_000 : Math.min(30_000, 1_000 * 2 ** attempt),
-    );
+    const wait = Number.isFinite(retryAfter)
+      ? retryAfter * 1_000
+      : Math.min(30_000, 1_000 * 2 ** Math.min(attempt - 1, 5));
+    log(`${label} received HTTP ${response.status}; retrying after ${wait} ms.`);
+    await delayWithinDeadline({ deadline, label, now, requestDelay, wait });
   }
-  throw new Error(`${label} failed after retries.`);
+}
+
+async function delayWithinDeadline({ deadline, label, now, requestDelay, wait }) {
+  const remaining = deadline - now();
+  if (remaining <= 0) throw new InactivityTimeoutExceeded(label);
+  await requestDelay(Math.min(wait, remaining));
+  if (now() >= deadline) throw new InactivityTimeoutExceeded(label);
+}
+
+class InactivityTimeoutExceeded extends Error {
+  constructor(label) {
+    super(`${label} reached the no-download-progress timeout`);
+  }
 }
 
 function findPersonalKey(value, prefix = "") {

@@ -44,11 +44,61 @@ test("history acquisition retries a throttled page", async () => {
     newestExistingSale: Number.NEGATIVE_INFINITY,
     pageLimit: 200,
     region: "eu",
+    log: () => {},
     requestDelay: async () => {},
   });
 
   assert.equal(attempts, 2);
   assert.equal(rows.length, 1);
+});
+
+test("history acquisition retries transient network failures inside the same process", async () => {
+  let attempts = 0;
+  const rows = await fetchHistoryRows({
+    artifactId: "alpha",
+    cutoff: Date.parse("2025-08-26T00:00:00.000Z"),
+    credentials,
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts < 3) throw new TypeError("fetch failed");
+      return response({ total: 1, prices: [{ price: 1, time: "2026-08-25T00:00:00.000Z" }] });
+    },
+    log: () => {},
+    newestExistingSale: Number.NEGATIVE_INFINITY,
+    pageLimit: 200,
+    region: "eu",
+    requestDelay: async () => {},
+  });
+
+  assert.equal(attempts, 3);
+  assert.equal(rows.length, 1);
+});
+
+test("history acquisition stops after its no-progress timeout", async () => {
+  let clock = 0;
+  let attempts = 0;
+  await assert.rejects(
+    fetchHistoryRows({
+      artifactId: "alpha",
+      cutoff: Date.parse("2025-08-26T00:00:00.000Z"),
+      credentials,
+      fetchImpl: async () => {
+        attempts += 1;
+        throw new TypeError("fetch failed");
+      },
+      inactivityTimeoutMs: 2_500,
+      log: () => {},
+      newestExistingSale: Number.NEGATIVE_INFINITY,
+      now: () => clock,
+      pageLimit: 200,
+      region: "eu",
+      requestDelay: async (milliseconds) => {
+        clock += milliseconds;
+      },
+    }),
+    /no-download-progress timeout/,
+  );
+  assert.equal(attempts, 2);
 });
 
 test("history acquisition respects the configured per-artifact page cap", async () => {

@@ -34,6 +34,12 @@ Runs stop before GitHub's hard job timeout and request a continuation. Regions
 remain sequential; a failure in one region must not delete or replace another
 region's last valid archive.
 
+Network exceptions and HTTP `429` or `5xx` responses retry inside the current
+job with exponential backoff. A valid API page resets the progress watchdog;
+five minutes without one fails the job. Only the soft runtime budget may
+self-dispatch the same region, while other failures require inspection or a
+manual restart.
+
 The weekly workflow starts with EU. An incomplete run dispatches itself for the
 same region; a complete run dispatches the next region. The repository must
 allow Actions to create workflow runs and write Release assets.

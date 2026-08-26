@@ -229,7 +229,10 @@ export class GitHubReleaseStore {
       ]);
       return true;
     } catch (error) {
-      if (error?.code === 1 && /no files matched|not found/i.test(`${error.stderr ?? ""} ${error.stdout ?? ""}`)) {
+      if (
+        error?.code === 1 &&
+        /no files matched|no assets match|not found/i.test(`${error.stderr ?? ""} ${error.stdout ?? ""}`)
+      ) {
         return false;
       }
       throw error;

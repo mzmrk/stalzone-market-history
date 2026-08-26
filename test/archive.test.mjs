@@ -125,6 +125,35 @@ test("region restore follows the stable pointer and verifies its archive", async
   }
 });
 
+test("region restore treats an absent regional pointer as an empty bootstrap", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "market-bootstrap-test-"));
+  try {
+    const store = new GitHubReleaseStore({
+      repository: "owner/data",
+      execFileImpl: async (_command, args) => {
+        if (args[0] === "release" && args[1] === "view") {
+          if (args[2] === "market-history-latest") return { stdout: "", stderr: "" };
+          const error = new Error("missing");
+          error.code = 1;
+          throw error;
+        }
+        if (args[0] === "release" && args[1] === "download") {
+          const error = new Error("no assets");
+          error.code = 1;
+          error.stderr = "no assets match the file pattern";
+          throw error;
+        }
+        throw new Error(`Unexpected arguments: ${args.join(" ")}`);
+      },
+    });
+
+    await store.restoreRegion({ region: "ru", workRoot: directory });
+    assert.deepEqual(await readFileOrNull(path.join(directory, "ru", "session.json")), null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("stable publishing verifies the versioned archive before moving its latest pointer", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "market-publish-test-"));
   const commands = [];
@@ -181,4 +210,13 @@ test("stable publishing verifies the versioned archive before moving its latest 
 async function copyFileFromMemory(contents, destination) {
   await mkdir(path.dirname(destination), { recursive: true });
   await writeFile(destination, contents);
+}
+
+async function readFileOrNull(file) {
+  try {
+    return await readFile(file, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
 }

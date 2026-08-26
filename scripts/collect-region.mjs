@@ -61,7 +61,7 @@ if (result.complete) {
 
 const workflowResult = {
   ...result,
-  nextRegion: result.complete ? nextRegion(region) : region,
+  nextRegion: result.complete ? nextRegion(region) : result.reason === "time-budget" ? region : null,
 };
 await writeFile(resultFile, `${JSON.stringify(workflowResult, null, 2)}\n`);
 console.log(`Collection result: ${JSON.stringify(workflowResult)}`);
@@ -70,6 +70,8 @@ if (process.env.GITHUB_OUTPUT) {
   await appendFile(process.env.GITHUB_OUTPUT, `complete=${workflowResult.complete}\n`);
   await appendFile(process.env.GITHUB_OUTPUT, `next_region=${workflowResult.nextRegion ?? ""}\n`);
 }
+
+if (!result.complete && result.reason !== "time-budget") process.exitCode = 1;
 
 function integerEnvironment(name, fallback) {
   const value = Number.parseInt(process.env[name] ?? "", 10);
