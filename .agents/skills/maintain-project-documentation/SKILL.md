@@ -10,12 +10,10 @@ authoritative source without repeating investigation.
 
 ## Boundaries
 
-- During project-memory maintenance, read any repository file needed as evidence but write only under `docs/`. This
-  boundary does not restrict files that the user's primary task explicitly requires changing.
-- Keep the root `README.md` outside project memory, authority, and validator scope; do not update it automatically. When
-  durable externally visible behavior changes—such as features, setup, deployment, data sources, security, or privacy—
-  read it only to detect contradictions. Edit it only when the primary task authorizes human-facing documentation;
-  otherwise report stale claims.
+- During documentation maintenance, read any repository file needed as evidence but write only under `docs/` and, when
+  the public-README workflow below applies, the root `README.md`. This boundary does not restrict files that the user's
+  primary task explicitly requires changing.
+- Keep the root `README.md` outside project memory, technical authority, validator scope, and the core word budget.
 - Do not modify code, tests, configuration, repository policy, generated artifacts, or other files as a documentation
   safeguard. Report the needed change separately.
 - Maintain Markdown in English. Preserve exact identifiers or non-English source text when translation would be wrong.
@@ -116,6 +114,35 @@ primary task authorizes it.
   references there under their required read conditions. Update ownership or impact mapping when responsibilities change.
 - Use relative links. Use kebab-case for new filenames, but do not rename existing files solely for style.
 
+### 7. Maintain the public README conditionally
+
+Treat the root `README.md` as concise onboarding for humans. Do not load it during routine core reading. Review it when
+a change affects public purpose, audience, status, primary URLs, installation, first use, requirements, supported
+platforms, major capabilities or limitations, external services or data, privacy, security, support, contribution,
+licensing, or attribution. Skip it for changes with no plausible effect on those claims.
+
+For an authorized change or build task, update affected README claims in the same change unless the user excludes
+human-facing documentation. For a read-only task, report contradictions without editing them.
+
+Write for a first-time visitor. Make the opening communicate:
+
+1. What the project does and who it is for.
+2. The fastest useful action: open, install, run, import, or download.
+3. Any status or limitation that could change the visitor's decision.
+
+After that, include only the shortest working usage path, meaningful capabilities, essential requirements and
+limitations, and relevant help, contribution, license, or attribution links. Adapt the structure to the project type;
+do not require fixed headings or empty sections.
+
+Aim for at most 800 words and consolidate when it exceeds 1,000, unless the README is deliberately the primary user
+documentation. Remove internal architecture, implementation rationale, exhaustive inventories, operational procedures,
+and detail better owned elsewhere. Link to useful human-facing detail when needed, including documents under `docs/`;
+the README must still provide enough context and first-use guidance to stand on its own.
+
+Verify changed claims against active source, configuration, tests, deployment, package scripts, licenses, and linked
+files. Run the documented quick start or a safe equivalent when practical. Check links, informative-image alt text, and
+rendered Markdown; prefer relative links for repository files. Report the README change or any unresolved contradiction.
+
 ## Keep mandatory memory compact
 
 Core memory is every Markdown file under `docs/` except files under `docs/references/` and `docs/evidence/`. Keep it at
@@ -159,24 +186,22 @@ store secrets, dependencies, build output, large reproducible downloads, or temp
 2. Search `docs/` for contradictions, duplicate ownership, stale terminology, and references to changed paths or
    behavior. Derive renamed or removed terms, routes, commands, data sources, and contracts from the diff and search the
    core and index for their old forms. Re-read affected surrounding documents.
-3. When externally visible behavior changed, compare relevant root `README.md` claims with the verified core and source;
-   update them only when authorized, otherwise report the contradiction.
-4. Re-check changed claims against active source and tests. Run relevant safe tests or documented verification commands
+3. Re-check changed claims against active source and tests. Run relevant safe tests or documented verification commands
    when practical; report important checks not run.
-5. Ensure documented commands state their working directory and prerequisites. Give risky procedures verification and
+4. Ensure documented commands state their working directory and prerequisites. Give risky procedures verification and
    recovery guidance; do not execute destructive, production, or expensive commands merely to check prose.
-6. Never manually edit generated files such as contracts, schemas, declarations, or documentation. Inspect them and
+5. Never manually edit generated files such as contracts, schemas, declarations, or documentation. Inspect them and
    their generators only.
-7. With the host repository root as the working directory, run Node on `scripts/validate-docs.mjs` inside the directory
+6. With the host repository root as the working directory, run Node on `scripts/validate-docs.mjs` inside the directory
    containing this `SKILL.md`; do not assume the validator is under the host repository's `./scripts/`. Then run
    `git diff --check` and review the final diff for unrelated churn, secrets, stale warnings, and unjustified growth.
-8. Do not stage or commit unrelated changes. Include documentation in the related primary-task commit, then commit each
+7. Do not stage or commit unrelated changes. Include documentation in the related primary-task commit, then commit each
    discrete change after it is completed and verified. Keep the message concise and use
    `area[,area2,area3]: intention of change and why it was done (what changed)`. Use at most three areas. Areas identify
    the primary product or system concerns changed, not every file category touched. Do not add `docs`, `tests`, or a
    generated-output area when those files only support another change; use `docs` only for documentation-only commits
    and `tests` only when testing behavior or infrastructure is itself the change.
-9. Report documents added, updated, consolidated, moved, or removed and why. Actively report skill feedback when an
+8. Report documents added, updated, consolidated, moved, or removed and why. Actively report skill feedback when an
    instruction is observed to be contradictory, incorrect, ambiguous, unnecessarily restrictive, poorly matched to
    the task, repetitive, or materially costly in time, context, or correctness. Report it even when the task succeeds;
    name the rule or behavior, its concrete impact, and a specific improvement. Do not invent hypothetical criticism or
