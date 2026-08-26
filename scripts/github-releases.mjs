@@ -4,6 +4,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { createGunzip, createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
@@ -12,12 +13,21 @@ import { validateRegionArchive } from "./archive.mjs";
 const execFileAsync = promisify(execFile);
 
 export class GitHubReleaseStore {
-  constructor({ repository, stableTag = "market-history-latest", stagingTag = "market-history-staging", execFileImpl = execFileAsync }) {
+  constructor({
+    repository,
+    stableTag = "market-history-latest",
+    stagingTag = "market-history-staging",
+    execFileImpl = execFileAsync,
+    sleepImpl = sleep,
+    deleteRetryDelaysMs = [1_000, 2_000, 4_000, 8_000],
+  }) {
     if (!repository) throw new Error("GitHub release storage requires a repository name.");
     this.repository = repository;
     this.stableTag = stableTag;
     this.stagingTag = stagingTag;
     this.execFile = execFileImpl;
+    this.sleep = sleepImpl;
+    this.deleteRetryDelaysMs = deleteRetryDelaysMs;
     this.stableStates = new Map();
     this.stagingStates = new Map();
   }
@@ -357,8 +367,24 @@ export class GitHubReleaseStore {
   }
 
   async deleteAsset(assetId) {
-    await this.execFile("gh", ["api", "--method", "DELETE", `repos/${this.repository}/releases/assets/${assetId}`]);
+    const endpoint = `repos/${this.repository}/releases/assets/${assetId}`;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await this.execFile("gh", ["api", "--silent", "--method", "DELETE", endpoint]);
+        return;
+      } catch (error) {
+        if (isNotFound(error)) return;
+        if (attempt >= this.deleteRetryDelaysMs.length) throw error;
+        const delay = this.deleteRetryDelaysMs[attempt];
+        console.warn(`Release asset ${assetId} deletion failed; retrying in ${delay} ms.`);
+        await this.sleep(delay);
+      }
+    }
   }
+}
+
+function isNotFound(error) {
+  return /\bHTTP\s*404\b/i.test(`${error?.message ?? ""} ${error?.stdout ?? ""} ${error?.stderr ?? ""}`);
 }
 
 function validateStableMarker(marker, region) {

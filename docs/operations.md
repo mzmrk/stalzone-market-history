@@ -52,10 +52,13 @@ it does not publish an incomplete archive. Matrix jobs remain sequential; a
 failure in one region must not delete, replace, or prevent an update of another
 region.
 
-Network exceptions and HTTP `429` or `5xx` responses retry inside the current
-job with exponential backoff. A valid API page resets the progress watchdog;
-five minutes without one fails the job. No collector result creates another
-workflow run.
+Auction-page network exceptions and HTTP `429` or `5xx` responses retry inside
+the current job with exponential backoff. Release-asset deletion also uses
+bounded exponential retries; a missing asset is treated as already deleted so a
+lost successful response remains idempotent. A persistent cleanup failure still
+fails the region after its latest marker is safely committed. A valid API page
+resets the progress watchdog; five minutes without one fails the job. No
+collector result creates another workflow run.
 
 The weekly workflow selects all five regions. Manual dispatch exposes five
 default-enabled region checkboxes; unselected regions are omitted from the

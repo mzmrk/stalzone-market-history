@@ -176,6 +176,60 @@ test("stable publication retains two immutable generations and cleans older asse
   }
 });
 
+test("release asset deletion retries a transient response failure without reading a body", async () => {
+  const calls = [];
+  const delays = [];
+  const store = new GitHubReleaseStore({
+    repository: "owner/data",
+    deleteRetryDelaysMs: [25],
+    sleepImpl: async (delay) => delays.push(delay),
+    execFileImpl: async (command, args) => {
+      calls.push([command, ...args]);
+      if (calls.length === 1) throw commandError("unexpected end of JSON input");
+      return { stdout: "", stderr: "" };
+    },
+  });
+
+  await store.deleteAsset(123);
+
+  assert.deepEqual(delays, [25]);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0], ["gh", "api", "--silent", "--method", "DELETE", "repos/owner/data/releases/assets/123"]);
+});
+
+test("release asset deletion treats not found after a lost response as success", async () => {
+  let calls = 0;
+  const store = new GitHubReleaseStore({
+    repository: "owner/data",
+    deleteRetryDelaysMs: [0],
+    sleepImpl: async () => {},
+    execFileImpl: async () => {
+      calls += 1;
+      if (calls === 1) throw commandError("unexpected end of JSON input");
+      throw commandError("gh: Not Found (HTTP 404)");
+    },
+  });
+
+  await store.deleteAsset(456);
+  assert.equal(calls, 2);
+});
+
+test("release asset deletion fails after exhausting bounded retries", async () => {
+  let calls = 0;
+  const store = new GitHubReleaseStore({
+    repository: "owner/data",
+    deleteRetryDelaysMs: [0, 0],
+    sleepImpl: async () => {},
+    execFileImpl: async () => {
+      calls += 1;
+      throw commandError("unexpected end of JSON input");
+    },
+  });
+
+  await assert.rejects(store.deleteAsset(789), /unexpected end of JSON input/);
+  assert.equal(calls, 3);
+});
+
 function session(overrides = {}) {
   return {
     schemaVersion: 1,
