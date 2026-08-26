@@ -44,7 +44,12 @@ workflow run.
 
 The weekly workflow selects all five regions. Manual dispatch exposes five
 default-enabled region checkboxes; unselected regions are omitted from the
-matrix. The repository must allow Actions to write Release assets.
+matrix. After the matrix finishes, the workflow commits
+[`status/last-run.json`](../status/last-run.json) with the attempted regions and
+workflow result. Besides providing an operational heartbeat, this keeps the
+public repository active so GitHub does not disable its scheduled workflow
+after 60 inactive days. The repository must allow Actions to write Release
+assets and the `main` branch.
 
 Before collection starts, the live artifact listing must contain at least 100
 items and every artifact in the previously published regional manifest. A

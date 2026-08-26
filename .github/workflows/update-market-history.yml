@@ -100,3 +100,34 @@ jobs:
 
       - name: Collect or resume region
         run: npm run collect -- "$MARKET_REGION"
+
+  record-activity:
+    needs: [plan, collect]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out current main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Record workflow activity
+        env:
+          MARKET_REGIONS: ${{ needs.plan.outputs.regions }}
+          MARKET_RUN_RESULT: ${{ needs.collect.result }}
+        run: node scripts/write-run-status.mjs status/last-run.json
+
+      - name: Commit operational status
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add status/last-run.json
+          git commit -m "status: record scheduled market update (keep automation active)"
+          git push origin HEAD:main

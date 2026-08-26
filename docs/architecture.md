@@ -8,8 +8,8 @@ or browser deployment.
 
 ## Persistence model
 
-The Git repository contains code and documentation only. Large data is stored
-as GitHub Release assets:
+The Git repository contains code, documentation, and a small operational status
+record. Large data is stored as GitHub Release assets:
 
 - The `market-history-staging` draft release stores resumable, per-artifact
   checkpoints through [`scripts/github-releases.mjs`](../scripts/github-releases.mjs).

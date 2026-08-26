@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "workflow": "update-market-history",
+  "attemptedAt": null,
+  "result": "not-run",
+  "regions": [],
+  "runId": null,
+  "runUrl": null
+}
