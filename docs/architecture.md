@@ -3,8 +3,8 @@
 ## Scope
 
 This repository owns acquisition and public archival of rolling STALZONE
-artifact auction history. It does not own calculator-specific price estimation
-or browser deployment.
+artifact auction history, plus the canonical artifact price estimator derived
+from that history. It does not own calculator behavior or browser deployment.
 
 ## Persistence model
 
@@ -33,7 +33,8 @@ one regional job does not cancel the remaining matrix jobs.
 
 ## Consumer boundary
 
-Public consumers download complete regional archives. Staging assets are an
+Public consumers may download complete regional archives or consume the merged
+[`data/pricing-index.json`](../data/pricing-index.json). Staging assets are an
 internal recovery mechanism and are not a stable data interface. Downstream
-applications derive their own indexes from published archives rather than
-depending on the collector workspace.
+applications must not independently reinterpret auction history when they need
+the canonical estimates; they should validate and bundle the published index.

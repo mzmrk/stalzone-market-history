@@ -1,14 +1,13 @@
 # TODO
 
-## Move price estimation into this repository
+## Finish price-estimation migration
 
-Price estimation and auction-cache acquisition currently remain in
-`stalzone-artifact-calculator-web`; this repository publishes only raw regional
-history archives.
+The canonical estimator, API findings, and current merged price index now live
+here. The remaining integration work is to generate regional indexes from the
+validated release archives after collection, merge them without discarding
+unchanged regions, and commit the merged index with the workflow status.
 
-Move the single canonical pricing implementation here, generate and commit
-regional price indexes from the published history, and retain the merged index
-in Git. Change the calculator to import and bundle that exact index, then remove
-its independent auction downloader, cache, and price generator. Both
-repositories may contain the generated price data, but only this repository
-should own the algorithm.
+After that, change the calculator to synchronize and bundle this exact index,
+then remove its independent auction downloader, cache, and estimator. Both
+repositories may contain generated price data, but only this repository owns
+the algorithm.

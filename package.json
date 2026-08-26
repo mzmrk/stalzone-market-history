@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "collect": "node scripts/collect-region.mjs",
+    "pricing:build": "node scripts/generate-pricing-index.mjs",
+    "pricing:merge": "node scripts/merge-pricing-indexes.mjs",
     "test": "node --test",
     "docs:check": "node .agents/skills/maintain-project-documentation/scripts/validate-docs.mjs"
   },
