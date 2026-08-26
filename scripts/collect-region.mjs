@@ -1,10 +1,11 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRegionArchive } from "./archive.mjs";
 import { collectRegion } from "./collector.mjs";
 import { GitHubReleaseStore } from "./github-releases.mjs";
 import { normalizeRegion } from "./regions.mjs";
+import { formatWorkflowReport } from "./workflow-report.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const listingUrl = "https://raw.githubusercontent.com/EXBO-Studio/stalzone-database/main/global/listing.json";
@@ -65,6 +66,11 @@ const workflowResult = {
 };
 await writeFile(resultFile, `${JSON.stringify(workflowResult, null, 2)}\n`);
 console.log(`Collection result: ${JSON.stringify(workflowResult)}`);
+if (process.env.GITHUB_ACTIONS) {
+  const report = formatWorkflowReport(workflowResult);
+  if (report.annotation) console.log(report.annotation);
+  if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, report.summary);
+}
 
 if (!result.complete && result.reason !== "time-budget") process.exitCode = 1;
 

@@ -31,8 +31,11 @@ artifacts and restarts only the incomplete artifact. Never publish an
 incomplete regional archive as the rolling public asset.
 
 Runs stop before GitHub's hard job timeout and retain their checkpoints for the
-next scheduled or manual run. Matrix jobs remain sequential; a failure in one
-region must not delete, replace, or prevent an update of another region.
+next scheduled or manual run. A runtime-budget stop remains a successful job
+but emits a warning and workflow summary labeled **Checkpointed, will resume**;
+it does not publish an incomplete archive. Matrix jobs remain sequential; a
+failure in one region must not delete, replace, or prevent an update of another
+region.
 
 Network exceptions and HTTP `429` or `5xx` responses retry inside the current
 job with exponential backoff. A valid API page resets the progress watchdog;
