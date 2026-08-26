@@ -22,6 +22,20 @@ the manifest.
 The newest and immediately preceding valid generations are retained for
 rollback. See [the data contract](docs/data-contract.md) before consuming them.
 
+## Price estimates
+
+The repository also publishes a canonical price index derived from validated
+completed sales across EU, RU, NA, SEA, and NEA. Estimates are grouped by
+artifact and rarity and include their method, confidence, sample count, source
+window, and provenance.
+
+- [View the price index on GitHub](data/pricing-index.json)
+- [Download the raw JSON](https://raw.githubusercontent.com/mzmrk/stalzone-market-history/main/data/pricing-index.json)
+
+The index contains historical estimates, not current listings or guaranteed
+sale prices. See [the pricing methodology](docs/pricing.md) before interpreting
+or redistributing estimates.
+
 ## Development
 
 Node.js 22 or newer is required.
