@@ -45,6 +45,6 @@ regional index under `regions.<region>`. Each regional index records its source
 window and provenance digest. Consumers may copy the generated data into their
 own deployment artifact, but must not fork the estimator silently.
 
-`stalzone-artifact-calculator-web` mirrors this file through a schema-validating,
-atomic synchronization step and bundles the result for offline runtime lookup.
-It does not acquire auction history or calculate prices independently.
+`stalzone-artifact-calculator-web` fetches and validates this file directly at
+runtime. It does not bundle a snapshot, persist a fallback, acquire auction
+history, or calculate prices independently.
