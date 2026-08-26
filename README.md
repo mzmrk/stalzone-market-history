@@ -1,10 +1,20 @@
 # STALZONE Market History
 
-A rolling, machine-readable archive of artifact auction history from the
-official STALZONE API. The dataset covers EU, RU, NA, SEA, and NEA and is
-published as compressed GitHub Release assets.
+A rolling artifact-auction archive and canonical price index for developers
+building **STALZONE** market tools. It preserves data from the official STALZONE
+API for EU, RU, NA, SEA, and NEA.
 
-## Data
+## Use the data
+
+- [Download the canonical price index](https://raw.githubusercontent.com/mzmrk/stalzone-market-history/main/data/pricing-index.json)
+- [Browse the price index on GitHub](data/pricing-index.json)
+- [Download regional history archives](https://github.com/mzmrk/stalzone-market-history/releases/tag/market-history-latest)
+
+Price estimates are historical completed-sale medians, not current listings or
+guaranteed sale prices. See [the pricing methodology](docs/pricing.md) before
+interpreting or redistributing them.
+
+## Regional history archives
 
 The rolling release provides immutable, timestamped generations. Consumers
 select the highest valid generation marker and verify its referenced digests:
@@ -24,17 +34,9 @@ rollback. See [the data contract](docs/data-contract.md) before consuming them.
 
 ## Price estimates
 
-The repository also publishes a canonical price index derived from validated
-completed sales across EU, RU, NA, SEA, and NEA. Estimates are grouped by
-artifact and rarity and include their method, confidence, sample count, source
-window, and provenance.
-
-- [View the price index on GitHub](data/pricing-index.json)
-- [Download the raw JSON](https://raw.githubusercontent.com/mzmrk/stalzone-market-history/main/data/pricing-index.json)
-
-The index contains historical estimates, not current listings or guaranteed
-sale prices. See [the pricing methodology](docs/pricing.md) before interpreting
-or redistributing estimates.
+The canonical index is derived from validated completed sales and grouped by
+artifact, rarity, and region. Each estimate includes its method, confidence,
+sample count, source window, and provenance.
 
 ## Development
 
