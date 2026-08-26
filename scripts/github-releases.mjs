@@ -233,9 +233,16 @@ export class GitHubReleaseStore {
       "api",
       "--paginate",
       `repos/${this.repository}/releases/${releaseId}/assets?per_page=100`,
-      "--slurp",
+      "--jq",
+      ".[] | [.id, .name] | @tsv",
     ]);
-    return JSON.parse(stdout).flat();
+    return stdout
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const [id, name] = line.split("\t");
+        return { id: Number(id), name };
+      });
   }
 
   async deleteAsset(assetId) {

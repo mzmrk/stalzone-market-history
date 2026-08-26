@@ -99,7 +99,7 @@ test("stable publishing verifies the versioned archive before moving its latest 
           return { stdout: "1\n", stderr: "" };
         }
         if (args[0] === "api" && args.some((argument) => argument.includes("releases/1/assets"))) {
-          return { stdout: JSON.stringify([[oldAsset]]), stderr: "" };
+          return { stdout: `${oldAsset.id}\t${oldAsset.name}\n`, stderr: "" };
         }
         return { stdout: "", stderr: "" };
       },
