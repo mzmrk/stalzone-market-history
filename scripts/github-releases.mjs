@@ -231,7 +231,9 @@ export class GitHubReleaseStore {
     } catch (error) {
       if (
         error?.code === 1 &&
-        /no files matched|no assets match|not found/i.test(`${error.stderr ?? ""} ${error.stdout ?? ""}`)
+        /no files matched|no assets (?:match|to download)|not found/i.test(
+          `${error.stderr ?? ""} ${error.stdout ?? ""}`,
+        )
       ) {
         return false;
       }

@@ -140,7 +140,7 @@ test("region restore treats an absent regional pointer as an empty bootstrap", a
         if (args[0] === "release" && args[1] === "download") {
           const error = new Error("no assets");
           error.code = 1;
-          error.stderr = "no assets match the file pattern";
+          error.stderr = "no assets to download";
           throw error;
         }
         throw new Error(`Unexpected arguments: ${args.join(" ")}`);
