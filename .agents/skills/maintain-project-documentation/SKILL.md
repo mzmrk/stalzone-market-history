@@ -1,6 +1,6 @@
 ---
 name: maintain-project-documentation
-description: Maintain compact, source-linked project memory under docs/. Use after every change to code, configuration, schemas, data, tooling, deployment, or workflows; when durable decisions, invariants, failure modes, or recurring traps are discovered; or when project documentation needs review, consolidation, or correction. Read the complete core memory in a fresh context, update affected knowledge, verify it against authoritative source and tests, and report when documentation impact is none.
+description: Maintain compact, source-linked project memory under docs/. Use before and after changes to code, configuration, schemas, data, tooling, deployment, or workflows; when durable decisions, invariants, failure modes, or recurring traps are discovered; or when project documentation needs review, consolidation, or correction. Read the complete core memory in a fresh context, map structural changes to existing architecture, update affected knowledge, verify it against authoritative source and tests, and report when documentation impact is none.
 ---
 
 # Maintain Project Documentation
@@ -12,8 +12,10 @@ authoritative source without repeating investigation.
 
 - During project-memory maintenance, read any repository file needed as evidence but write only under `docs/`. This
   boundary does not restrict files that the user's primary task explicitly requires changing.
-- Exclude the root `README.md` from project memory and authority. Do not read or edit it for memory maintenance; an
-  explicit human-documentation task may use it without adding it to the core or validator scope.
+- Keep the root `README.md` outside project memory, authority, and validator scope; do not update it automatically. When
+  durable externally visible behavior changes—such as features, setup, deployment, data sources, security, or privacy—
+  read it only to detect contradictions. Edit it only when the primary task authorizes human-facing documentation;
+  otherwise report stale claims.
 - Do not modify code, tests, configuration, repository policy, generated artifacts, or other files as a documentation
   safeguard. Report the needed change separately.
 - Maintain Markdown in English. Preserve exact identifiers or non-English source text when translation would be wrong.
@@ -49,7 +51,15 @@ reaches each measured line count; if output is missing or truncated, resume sequ
 Every document's full content must enter agent context; an index, summary, hash, search result, or redirected output is
 not a substitute.
 
-### 2. Trace authoritative behavior
+### 2. Map architecture before structural changes
+
+Before implementing a structural primary-task change, map the requirement to existing owners, contracts, state and data
+flow, dependency direction, lifecycle or persistence, and test seams. Prefer the current boundary when its responsibility
+already fits. Add or split a module, component, type, or service only for a distinct responsibility, lifecycle, dependency
+boundary, or independently testable contract. Check affected producers and consumers, and avoid expanding a coordinator
+that already owns unrelated concerns.
+
+### 3. Trace authoritative behavior
 
 Inspect the active implementation, callers, schemas, configuration, scripts, persistence, tests, and generated
 contracts affected by the task. Confirm that plausible-looking files are active through imports, registration, or
@@ -69,7 +79,7 @@ coverage-only changes with no semantic impact.
 Separate implemented behavior from intended policy, and current limitations from deliberate design. Do not describe
 something as intentional without evidence.
 
-### 3. Decide documentation impact
+### 4. Decide documentation impact
 
 Record knowledge only when it is durable, project-specific, non-obvious, and useful to future work. Prefer:
 
@@ -85,15 +95,17 @@ instead of copying it.
 
 When no durable knowledge changed, leave `docs/` untouched and report `Documentation impact: none` after verification.
 
-### 4. Prevent repeated mistakes
+### 5. Prevent repeated mistakes
 
 When work exposes a recurring trap, first identify the smallest enforceable safeguard: a type or schema constraint,
 focused test, validator, fail-fast check, or clearer code boundary. During memory maintenance, implement it only when the
 primary task authorizes that file change; otherwise report the exact safeguard separately. Document only the remaining
 project-specific invariant, limitation, or action in its canonical owner—not incident chronology or blame. Remove or
-rewrite the warning once the safeguard makes it obsolete.
+rewrite the warning once the safeguard makes it obsolete. If a cheap existing documentation validator is absent from
+relevant existing CI while reviewing the documentation workflow, report the enforcement gap; change CI only when the
+primary task authorizes it.
 
-### 5. Update the canonical owner
+### 6. Update the canonical owner
 
 - Give each substantive claim one canonical owner. Other documents may provide a short contextual link to that owner,
   but must not restate or maintain the claim independently. Replace stale text instead of appending corrections or
@@ -145,19 +157,26 @@ store secrets, dependencies, build output, large reproducible downloads, or temp
 
 1. Re-read every changed document to confirmed EOF.
 2. Search `docs/` for contradictions, duplicate ownership, stale terminology, and references to changed paths or
-   behavior. Re-read affected surrounding documents.
-3. Re-check changed claims against active source and tests. Run relevant safe tests or documented verification commands
+   behavior. Derive renamed or removed terms, routes, commands, data sources, and contracts from the diff and search the
+   core and index for their old forms. Re-read affected surrounding documents.
+3. When externally visible behavior changed, compare relevant root `README.md` claims with the verified core and source;
+   update them only when authorized, otherwise report the contradiction.
+4. Re-check changed claims against active source and tests. Run relevant safe tests or documented verification commands
    when practical; report important checks not run.
-4. Ensure documented commands state their working directory and prerequisites. Give risky procedures verification and
+5. Ensure documented commands state their working directory and prerequisites. Give risky procedures verification and
    recovery guidance; do not execute destructive, production, or expensive commands merely to check prose.
-5. Never manually edit generated files such as contracts, schemas, declarations, or documentation. Inspect them and
+6. Never manually edit generated files such as contracts, schemas, declarations, or documentation. Inspect them and
    their generators only.
-6. With the host repository root as the working directory, run Node on `scripts/validate-docs.mjs` inside the directory
+7. With the host repository root as the working directory, run Node on `scripts/validate-docs.mjs` inside the directory
    containing this `SKILL.md`; do not assume the validator is under the host repository's `./scripts/`. Then run
    `git diff --check` and review the final diff for unrelated churn, secrets, stale warnings, and unjustified growth.
-7. Do not stage or commit unrelated changes. Include documentation in the related primary-task commit, then follow the
-   commit policy in the repository root `AGENTS.md`.
-8. Report documents added, updated, consolidated, moved, or removed and why. Actively report skill feedback when an
+8. Do not stage or commit unrelated changes. Include documentation in the related primary-task commit, then commit each
+   discrete change after it is completed and verified. Keep the message concise and use
+   `area[,area2,area3]: intention of change and why it was done (what changed)`. Use at most three areas. Areas identify
+   the primary product or system concerns changed, not every file category touched. Do not add `docs`, `tests`, or a
+   generated-output area when those files only support another change; use `docs` only for documentation-only commits
+   and `tests` only when testing behavior or infrastructure is itself the change.
+9. Report documents added, updated, consolidated, moved, or removed and why. Actively report skill feedback when an
    instruction is observed to be contradictory, incorrect, ambiguous, unnecessarily restrictive, poorly matched to
    the task, repetitive, or materially costly in time, context, or correctness. Report it even when the task succeeds;
    name the rule or behavior, its concrete impact, and a specific improvement. Do not invent hypothetical criticism or
