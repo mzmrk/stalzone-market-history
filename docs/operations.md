@@ -39,6 +39,6 @@ job with exponential backoff. A valid API page resets the progress watchdog;
 five minutes without one fails the job. No collector result creates another
 workflow run.
 
-The weekly workflow selects all five regions. Manual dispatch exposes five
-default-enabled region checkboxes; unselected regions are omitted from the
-matrix. The repository must allow Actions to write Release assets.
+The weekly workflow selects all five regions. Manual dispatch offers `all` by
+default or one specific region; the selection becomes a sequential matrix. The
+repository must allow Actions to write Release assets.

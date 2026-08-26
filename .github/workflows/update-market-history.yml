@@ -1,31 +1,17 @@
 name: Update market history
-run-name: Market history (${{ github.event_name == 'schedule' && 'all regions' || 'selected regions' }})
+run-name: Market history (${{ github.event_name == 'schedule' && 'all' || inputs.region }})
 
 on:
   schedule:
     - cron: "23 4 * * 1"
   workflow_dispatch:
     inputs:
-      eu:
-        description: Update EU
-        type: boolean
-        default: true
-      ru:
-        description: Update RU
-        type: boolean
-        default: true
-      na:
-        description: Update NA
-        type: boolean
-        default: true
-      sea:
-        description: Update SEA
-        type: boolean
-        default: true
-      nea:
-        description: Update NEA
-        type: boolean
-        default: true
+      region:
+        description: Region to update
+        required: true
+        type: choice
+        options: [all, eu, ru, na, sea, nea]
+        default: all
 
 permissions:
   contents: write
@@ -38,25 +24,22 @@ jobs:
   plan:
     runs-on: ubuntu-latest
     outputs:
-      has_regions: ${{ steps.regions.outputs.has_regions }}
       regions: ${{ steps.regions.outputs.regions }}
     steps:
       - name: Build selected-region matrix
         id: regions
         env:
-          SELECT_EU: ${{ github.event_name == 'schedule' || inputs.eu }}
-          SELECT_RU: ${{ github.event_name == 'schedule' || inputs.ru }}
-          SELECT_NA: ${{ github.event_name == 'schedule' || inputs.na }}
-          SELECT_SEA: ${{ github.event_name == 'schedule' || inputs.sea }}
-          SELECT_NEA: ${{ github.event_name == 'schedule' || inputs.nea }}
+          REGION_SELECTION: ${{ github.event_name == 'schedule' && 'all' || inputs.region }}
         run: |
           node -e '
             const fs = require("node:fs");
-            const regions = ["eu", "ru", "na", "sea", "nea"].filter(
-              region => process.env[`SELECT_${region.toUpperCase()}`] === "true",
-            );
+            const supported = ["eu", "ru", "na", "sea", "nea"];
+            const selection = process.env.REGION_SELECTION;
+            if (selection !== "all" && !supported.includes(selection)) {
+              throw new Error(`Unsupported region selection: ${selection}`);
+            }
+            const regions = selection === "all" ? supported : [selection];
             fs.appendFileSync(process.env.GITHUB_OUTPUT, `regions=${JSON.stringify(regions)}\n`);
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, `has_regions=${regions.length > 0}\n`);
           '
 
   verify:
@@ -75,7 +58,6 @@ jobs:
 
   collect:
     needs: [plan, verify]
-    if: needs.plan.outputs.has_regions == 'true'
     strategy:
       fail-fast: false
       max-parallel: 1
