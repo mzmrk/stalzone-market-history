@@ -342,10 +342,10 @@ export class GitHubReleaseStore {
   }
 
   async releaseId(tag) {
-    const { stdout } = await this.execFile("gh", ["api", "--paginate", `repos/${this.repository}/releases?per_page=100`, "--jq", `.[] | select(.tag_name == ${JSON.stringify(tag)}) | .id`]);
-    const id = stdout.trim();
-    if (!id) throw new Error(`GitHub release not found: ${tag}.`);
-    return id;
+    const { stdout } = await this.execFile("gh", ["release", "view", tag, "--repo", this.repository, "--json", "apiUrl", "--jq", ".apiUrl"]);
+    const match = stdout.trim().match(/\/releases\/(\d+)$/);
+    if (!match) throw new Error(`GitHub release has an invalid API URL: ${tag}.`);
+    return match[1];
   }
 
   async releaseAssets(releaseId) {

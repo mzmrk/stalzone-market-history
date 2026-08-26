@@ -48,6 +48,8 @@ test("checkpoint commits immutable data before its timestamped session marker", 
     const marker = backend.jsonAsset("market-history-staging", path.basename(uploads[1][4]));
     assert.equal(marker.session.completedArtifactIds[0], "alpha");
     assert.equal(marker.artifacts.alpha.name, path.basename(uploads[0][4]));
+    assert.ok(backend.commands.some((command) => command[1] === "release" && command[2] === "view" && command.includes("apiUrl")));
+    assert.ok(!backend.commands.some((command) => command.some((value) => value.includes?.("releases?per_page=100"))));
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -221,7 +223,10 @@ class FakeReleaseBackend {
     if (command === "tar") return execFileAsync(command, args);
     if (command !== "gh") throw new Error(`Unexpected command: ${command}`);
     if (args[0] === "release" && args[1] === "view") {
-      if (this.releases.has(args[2])) return { stdout: "", stderr: "" };
+      if (this.releases.has(args[2])) {
+        const id = [...this.releases.keys()].indexOf(args[2]) + 1;
+        return { stdout: args.includes("--json") ? `https://api.github.com/repos/owner/data/releases/${id}\n` : "", stderr: "" };
+      }
       throw commandError("release missing");
     }
     if (args[0] === "release" && args[1] === "create") {
