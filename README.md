@@ -6,21 +6,21 @@ published as compressed GitHub Release assets.
 
 ## Data
 
-The rolling release provides a `latest-<region>.json` pointer for each region.
-It names the current content-addressed archive, manifest, and SHA-256 digest:
+The rolling release provides immutable, timestamped generations. Consumers
+select the highest valid generation marker and verify its referenced digests:
 
 ```text
-latest-eu.json
-auction-history-eu-<digest>.tar.gz
-manifest-eu-<digest>.json
-auction-history-eu-<digest>.sha256
+generation-eu-<digest>-<timestamp>.json
+auction-history-eu-<digest>-<timestamp>.tar.gz
+manifest-eu-<digest>-<timestamp>.json
 ```
 
 Each archive contains a manifest and one JSON Lines file per artifact. Sale
 objects are preserved as returned by the API; collection metadata is kept in
 the manifest.
 
-See [the data contract](docs/data-contract.md) before consuming the archive.
+The newest and immediately preceding valid generations are retained for
+rollback. See [the data contract](docs/data-contract.md) before consuming them.
 
 ## Development
 

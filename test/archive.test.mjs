@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { gunzipSync } from "node:zlib";
 import { buildRegionArchive, validateRegionArchive } from "../scripts/archive.mjs";
 import { GitHubReleaseStore } from "../scripts/github-releases.mjs";
 
@@ -17,10 +16,7 @@ test("regional archive validation requires every manifest artifact", async () =>
   try {
     await mkdir(path.join(directory, "artifacts"));
     await writeFile(path.join(directory, "artifacts", "alpha.jsonl"), '{"price":1,"time":"2026-01-01T00:00:00Z"}\n');
-    await writeFile(
-      path.join(directory, "manifest.json"),
-      JSON.stringify({ status: "complete", artifacts: { alpha: { records: 1 } } }),
-    );
+    await writeFile(path.join(directory, "manifest.json"), JSON.stringify({ status: "complete", artifacts: { alpha: { records: 1 } } }));
     const archive = path.join(directory, "auction-history-eu.tar.gz");
     const built = await buildRegionArchive({ archive, regionDirectory: directory });
 
@@ -32,191 +28,250 @@ test("regional archive validation requires every manifest artifact", async () =>
   }
 });
 
-test("release checkpoint uploads the completed raw artifact before the session marker", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "market-release-test-"));
-  const commands = [];
-  let uploadedRaw;
+test("checkpoint commits immutable data before its timestamped session marker", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "market-checkpoint-test-"));
+  const backend = new FakeReleaseBackend();
   try {
     const artifactFile = path.join(directory, "alpha.jsonl");
     const sessionFile = path.join(directory, "session.json");
-    await writeFile(artifactFile, '{"price":1,"time":"2026-01-01T00:00:00Z","additional":{"qlt":0}}\n');
-    await writeFile(sessionFile, '{"completedArtifactIds":["alpha"]}\n');
-    const store = new GitHubReleaseStore({
-      repository: "owner/data",
-      execFileImpl: async (command, args) => {
-        commands.push([command, ...args]);
-        if (args[0] === "release" && args[1] === "view") {
-          const error = new Error("missing");
-          error.code = 1;
-          throw error;
-        }
-        if (args[0] === "release" && args[1] === "upload") {
-          const compressed = args.find((argument) => argument.endsWith("eu--alpha.jsonl.gz"));
-          uploadedRaw = gunzipSync(await readFile(compressed, null)).toString("utf8");
-        }
-        return { stdout: "", stderr: "" };
-      },
-    });
+    await writeFile(artifactFile, '{"price":1,"time":"2026-01-01T00:00:00Z"}\n');
+    await writeFile(sessionFile, `${JSON.stringify(session({ completedArtifactIds: ["alpha"] }))}\n`);
+    const store = backend.store();
 
     await store.checkpoint({ artifactFile, artifactId: "alpha", region: "eu", sessionFile });
 
-    assert.equal(uploadedRaw, await readFile(artifactFile, "utf8"));
-    const upload = commands.find((command) => command[1] === "release" && command[2] === "upload");
-    assert.ok(upload.find((argument) => argument.endsWith("eu--alpha.jsonl.gz")));
-    assert.ok(upload.find((argument) => argument.endsWith("eu--session.json")));
-    assert.ok(upload.indexOf(upload.find((argument) => argument.endsWith("eu--alpha.jsonl.gz"))) < upload.indexOf(upload.find((argument) => argument.endsWith("eu--session.json"))));
+    const uploads = backend.commands.filter((command) => command[1] === "release" && command[2] === "upload");
+    assert.equal(uploads.length, 2);
+    assert.doesNotMatch(uploads.flat().join(" "), /--clobber/);
+    assert.match(path.basename(uploads[0][4]), /^checkpoint-eu-alpha-[a-f0-9]{12}-20260826T120000000Z\.jsonl\.gz$/);
+    assert.match(path.basename(uploads[1][4]), /^checkpoint-session-eu-r000001-[a-f0-9]{12}-20260826T120000000Z\.json$/);
+    const marker = backend.jsonAsset("market-history-staging", path.basename(uploads[1][4]));
+    assert.equal(marker.session.completedArtifactIds[0], "alpha");
+    assert.equal(marker.artifacts.alpha.name, path.basename(uploads[0][4]));
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("region restore follows the stable pointer and verifies its archive", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "market-restore-test-"));
-  const source = path.join(directory, "source");
-  const workRoot = path.join(directory, "work");
-  const assets = new Map();
+test("restore falls back to the previous committed stable generation when the newer archive is damaged", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "market-stable-fallback-"));
+  const backend = new FakeReleaseBackend();
   try {
-    await mkdir(path.join(source, "artifacts"), { recursive: true });
-    await writeFile(path.join(source, "artifacts", "alpha.jsonl"), '{"price":1,"time":"2026-01-01T00:00:00Z"}\n');
-    await writeFile(
-      path.join(source, "manifest.json"),
-      JSON.stringify({ status: "complete", artifacts: { alpha: { records: 1 } } }),
-    );
-    const built = await buildRegionArchive({
-      archive: path.join(directory, "source.tar.gz"),
-      regionDirectory: source,
-    });
-    const versionedName = `auction-history-eu-${built.digest.slice(0, 12)}.tar.gz`;
-    assets.set(versionedName, await readFile(built.archive));
-    assets.set(
-      "latest-eu.json",
-      Buffer.from(
-        JSON.stringify({ schemaVersion: 1, region: "eu", archive: versionedName, sha256: built.digest }),
-      ),
-    );
-    const store = new GitHubReleaseStore({
-      repository: "owner/data",
-      execFileImpl: async (command, args) => {
-        if (command === "tar") return execFileAsync(command, args);
-        if (args[0] === "release" && args[1] === "view") {
-          if (args[2] === "market-history-latest") return { stdout: "", stderr: "" };
-          const error = new Error("missing");
-          error.code = 1;
-          throw error;
-        }
-        if (args[0] === "release" && args[1] === "download") {
-          const name = args[args.indexOf("--pattern") + 1];
-          const output = args[args.indexOf("--dir") + 1];
-          await copyFileFromMemory(assets.get(name), path.join(output, name));
-          return { stdout: "", stderr: "" };
-        }
-        throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
-      },
-    });
+    const store = backend.store();
+    const older = await regionFixture(directory, "older", "2026-08-25T12:00:00.000Z", 1);
+    const newer = await regionFixture(directory, "newer", "2026-08-26T12:00:00.000Z", 2);
+    await store.publishRegion({ ...older, region: "eu" });
+    await store.publishRegion({ ...newer, region: "eu" });
+    const markers = backend.assetNames("market-history-latest").filter((name) => name.startsWith("generation-eu-"));
+    assert.equal(markers.length, 2);
+    const newestMarker = markers.map((name) => backend.jsonAsset("market-history-latest", name)).sort((a, b) => b.generation - a.generation)[0];
+    backend.assets("market-history-latest").set(newestMarker.archive.name, { id: 999, bytes: Buffer.from("damaged") });
 
-    await store.restoreRegion({ region: "eu", workRoot });
+    const restoredRoot = path.join(directory, "restored");
+    await backend.store().restoreRegion({ region: "eu", workRoot: restoredRoot });
+
+    const row = JSON.parse((await readFile(path.join(restoredRoot, "eu", "artifacts", "alpha.jsonl"), "utf8")).trim());
+    assert.equal(row.price, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("conflicting valid stable markers at the same generation fail closed", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "market-stable-fork-"));
+  const backend = new FakeReleaseBackend();
+  try {
+    const initialStore = backend.store();
+    const initial = await regionFixture(directory, "initial", "2026-08-24T12:00:00.000Z", 1);
+    await initialStore.publishRegion({ ...initial, region: "eu" });
+
+    const firstWriter = backend.store();
+    const secondWriter = backend.store();
+    await firstWriter.restoreRegion({ region: "eu", workRoot: path.join(directory, "first-work") });
+    await secondWriter.restoreRegion({ region: "eu", workRoot: path.join(directory, "second-work") });
+
+    const first = await regionFixture(directory, "first-fork", "2026-08-25T12:00:00.000Z", 2);
+    const second = await regionFixture(directory, "second-fork", "2026-08-26T12:00:00.000Z", 3);
+    await firstWriter.publishRegion({ ...first, region: "eu" });
+    await assert.rejects(
+      secondWriter.publishRegion({ ...second, region: "eu" }),
+      /Conflicting stable generation 2/,
+    );
 
     assert.equal(
-      await readFile(path.join(workRoot, "eu", "artifacts", "alpha.jsonl"), "utf8"),
-      await readFile(path.join(source, "artifacts", "alpha.jsonl"), "utf8"),
+      backend.assetNames("market-history-latest").filter((name) => name.startsWith("generation-eu-")).length,
+      3,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("region restore treats an absent regional pointer as an empty bootstrap", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "market-bootstrap-test-"));
+test("restore never mixes staging revisions and falls back when the newest checkpoint is incomplete", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "market-staging-fallback-"));
+  const backend = new FakeReleaseBackend();
   try {
-    const store = new GitHubReleaseStore({
-      repository: "owner/data",
-      execFileImpl: async (_command, args) => {
-        if (args[0] === "release" && args[1] === "view") {
-          if (args[2] === "market-history-latest") return { stdout: "", stderr: "" };
-          const error = new Error("missing");
-          error.code = 1;
-          throw error;
-        }
-        if (args[0] === "release" && args[1] === "download") {
-          const error = new Error("no assets");
-          error.code = 1;
-          error.stderr = "no assets to download";
-          throw error;
-        }
-        throw new Error(`Unexpected arguments: ${args.join(" ")}`);
-      },
-    });
+    const store = backend.store();
+    const artifactDirectory = path.join(directory, "artifacts");
+    await mkdir(artifactDirectory);
+    const sessionFile = path.join(directory, "session.json");
+    const alpha = path.join(artifactDirectory, "alpha.jsonl");
+    const beta = path.join(artifactDirectory, "beta.jsonl");
+    await writeFile(alpha, '{"price":1}\n');
+    await writeFile(sessionFile, `${JSON.stringify(session({ completedArtifactIds: ["alpha"] }))}\n`);
+    await store.checkpoint({ artifactFile: alpha, artifactId: "alpha", region: "eu", sessionFile });
+    await writeFile(beta, '{"price":2}\n');
+    await writeFile(sessionFile, `${JSON.stringify(session({ completedArtifactIds: ["alpha", "beta"], updatedAt: "2026-08-26T12:01:00.000Z" }))}\n`);
+    await store.checkpoint({ artifactFile: beta, artifactId: "beta", region: "eu", sessionFile });
+    const newest = backend.assetNames("market-history-staging")
+      .filter((name) => name.startsWith("checkpoint-session-eu-"))
+      .map((name) => backend.jsonAsset("market-history-staging", name))
+      .sort((a, b) => b.revision - a.revision)[0];
+    backend.assets("market-history-staging").delete(newest.artifacts.beta.name);
 
-    await store.restoreRegion({ region: "ru", workRoot: directory });
-    assert.deepEqual(await readFileOrNull(path.join(directory, "ru", "session.json")), null);
+    const restoredRoot = path.join(directory, "restored");
+    await backend.store().restoreRegion({ region: "eu", workRoot: restoredRoot });
+    const restoredSession = JSON.parse(await readFile(path.join(restoredRoot, "eu", "session.json"), "utf8"));
+
+    assert.deepEqual(restoredSession.completedArtifactIds, ["alpha"]);
+    assert.equal(await readFile(path.join(restoredRoot, "eu", "artifacts", "alpha.jsonl"), "utf8"), '{"price":1}\n');
+    await assert.rejects(readFile(path.join(restoredRoot, "eu", "artifacts", "beta.jsonl")), { code: "ENOENT" });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("stable publishing verifies the versioned archive before moving its latest pointer", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "market-publish-test-"));
-  const commands = [];
-  const assets = new Map();
+test("legacy fixed assets survive as rollback until a second immutable generation is committed", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "market-legacy-migration-"));
+  const backend = new FakeReleaseBackend();
   try {
-    const archive = path.join(directory, "archive.tar.gz");
-    const manifestFile = path.join(directory, "manifest.json");
-    await writeFile(archive, "verified archive bytes");
-    await writeFile(manifestFile, '{"capturedAt":"2026-08-26T00:00:00.000Z"}\n');
-    const digest = createHash("sha256").update(await readFile(archive)).digest("hex");
-    const oldAsset = { id: 10, name: "auction-history-eu-old.tar.gz" };
-    const store = new GitHubReleaseStore({
-      repository: "owner/data",
-      execFileImpl: async (command, args) => {
-        commands.push([command, ...args]);
-        if (args[0] === "release" && args[1] === "upload") {
-          for (const argument of args.slice(3, args.indexOf("--clobber"))) {
-            assets.set(path.basename(argument), await readFile(argument));
-          }
-        }
-        if (args[0] === "release" && args[1] === "download") {
-          const name = args[args.indexOf("--pattern") + 1];
-          const output = args[args.indexOf("--dir") + 1];
-          await copyFileFromMemory(assets.get(name), path.join(output, name));
-        }
-        if (args[0] === "api" && args.some((argument) => argument.includes("releases?per_page=100"))) {
-          return { stdout: "1\n", stderr: "" };
-        }
-        if (args[0] === "api" && args.some((argument) => argument.includes("releases/1/assets"))) {
-          return { stdout: `${oldAsset.id}\t${oldAsset.name}\n`, stderr: "" };
-        }
-        return { stdout: "", stderr: "" };
-      },
-    });
+    const legacy = await regionFixture(directory, "legacy", "2026-08-24T12:00:00.000Z", 1);
+    const legacyName = `auction-history-eu-${legacy.digest.slice(0, 12)}.tar.gz`;
+    backend.put("market-history-latest", legacyName, await readFile(legacy.archive));
+    backend.put("market-history-latest", "latest-eu.json", Buffer.from(JSON.stringify({ schemaVersion: 1, region: "eu", capturedAt: "2026-08-24T12:00:00.000Z", archive: legacyName, sha256: legacy.digest })));
+    const store = backend.store();
+    await store.restoreRegion({ region: "eu", workRoot: path.join(directory, "work") });
+    const first = await regionFixture(directory, "first", "2026-08-25T12:00:00.000Z", 2);
+    const second = await regionFixture(directory, "second", "2026-08-26T12:00:00.000Z", 3);
 
-    await store.publishRegion({ archive, digest, manifestFile, region: "eu" });
-
-    const archiveUpload = commands.findIndex(
-      (entry) => entry[1] === "release" && entry[2] === "upload" && entry.some((value) => value.includes(digest.slice(0, 12))),
+    await store.publishRegion({ ...first, region: "eu" });
+    assert.ok(backend.assetNames("market-history-latest").includes("latest-eu.json"));
+    const commandOffset = backend.commands.length;
+    await store.publishRegion({ ...second, region: "eu" });
+    const secondPublish = backend.commands.slice(commandOffset);
+    const markerUpload = secondPublish.findIndex(
+      (command) => command[1] === "release" && command[2] === "upload" && path.basename(command[4]).startsWith("generation-eu-"),
     );
-    const verification = commands.findIndex((entry) => entry[1] === "release" && entry[2] === "download");
-    const pointerUpload = commands.findIndex(
-      (entry) => entry[1] === "release" && entry[2] === "upload" && entry.some((value) => value.endsWith("latest-eu.json")),
-    );
-    const oldDelete = commands.findIndex((entry) => entry.includes("repos/owner/data/releases/assets/10"));
-    assert.ok(archiveUpload < verification);
-    assert.ok(verification < pointerUpload);
-    assert.ok(pointerUpload < oldDelete);
+    const firstDelete = secondPublish.findIndex((command) => command[1] === "api" && command.includes("DELETE"));
+    assert.ok(markerUpload >= 0 && firstDelete > markerUpload);
+    assert.doesNotMatch(secondPublish.flat().join(" "), /--clobber/);
+    assert.ok(!backend.assetNames("market-history-latest").includes("latest-eu.json"));
+    assert.equal(backend.assetNames("market-history-latest").filter((name) => name.startsWith("generation-eu-")).length, 2);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-async function copyFileFromMemory(contents, destination) {
-  await mkdir(path.dirname(destination), { recursive: true });
-  await writeFile(destination, contents);
+function session(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    status: "in-progress",
+    region: "eu",
+    capturedAt: "2026-08-26T12:00:00.000Z",
+    updatedAt: "2026-08-26T12:00:00.000Z",
+    completedArtifactIds: [],
+    ...overrides,
+  };
 }
 
-async function readFileOrNull(file) {
-  try {
-    return await readFile(file, "utf8");
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    throw error;
+async function regionFixture(root, name, capturedAt, price) {
+  const directory = path.join(root, name);
+  await mkdir(path.join(directory, "artifacts"), { recursive: true });
+  await writeFile(path.join(directory, "artifacts", "alpha.jsonl"), `${JSON.stringify({ price, time: capturedAt })}\n`);
+  const manifestFile = path.join(directory, "manifest.json");
+  await writeFile(manifestFile, `${JSON.stringify({ schemaVersion: 1, status: "complete", region: "eu", capturedAt, artifacts: { alpha: { records: 1 } } })}\n`);
+  const built = await buildRegionArchive({ archive: path.join(directory, "archive.tar.gz"), regionDirectory: directory });
+  return { archive: built.archive, digest: built.digest, manifestFile };
+}
+
+class FakeReleaseBackend {
+  constructor() {
+    this.releases = new Map();
+    this.commands = [];
+    this.nextAssetId = 1;
   }
+
+  store() {
+    return new GitHubReleaseStore({ repository: "owner/data", execFileImpl: this.execFile.bind(this) });
+  }
+
+  assets(tag) {
+    if (!this.releases.has(tag)) this.releases.set(tag, new Map());
+    return this.releases.get(tag);
+  }
+
+  assetNames(tag) { return [...this.assets(tag).keys()]; }
+  jsonAsset(tag, name) { return JSON.parse(this.assets(tag).get(name).bytes.toString("utf8")); }
+  put(tag, name, bytes) { this.assets(tag).set(name, { id: this.nextAssetId++, bytes: Buffer.from(bytes) }); }
+
+  async execFile(command, args) {
+    this.commands.push([command, ...args]);
+    if (command === "tar") return execFileAsync(command, args);
+    if (command !== "gh") throw new Error(`Unexpected command: ${command}`);
+    if (args[0] === "release" && args[1] === "view") {
+      if (this.releases.has(args[2])) return { stdout: "", stderr: "" };
+      throw commandError("release missing");
+    }
+    if (args[0] === "release" && args[1] === "create") {
+      this.assets(args[2]);
+      return { stdout: "", stderr: "" };
+    }
+    if (args[0] === "release" && args[1] === "upload") {
+      const tag = args[2];
+      for (const file of args.slice(3, args.indexOf("--repo"))) {
+        const name = path.basename(file);
+        if (this.assets(tag).has(name)) throw new Error(`asset already exists: ${name}`);
+        this.put(tag, name, await readFile(file));
+      }
+      return { stdout: "", stderr: "" };
+    }
+    if (args[0] === "release" && args[1] === "download") {
+      const tag = args[2];
+      const pattern = args[args.indexOf("--pattern") + 1];
+      const destination = args[args.indexOf("--dir") + 1];
+      const matches = [...this.assets(tag)].filter(([name]) => globMatches(name, pattern));
+      if (matches.length === 0) throw commandError("no assets to download");
+      await mkdir(destination, { recursive: true });
+      for (const [name, asset] of matches) await writeFile(path.join(destination, name), asset.bytes);
+      return { stdout: "", stderr: "" };
+    }
+    if (args[0] === "api" && args.some((value) => value.includes("releases?per_page=100"))) {
+      const tag = [...this.releases.keys()].find((candidate) => args.at(-1).includes(JSON.stringify(candidate)));
+      return { stdout: tag ? `${[...this.releases.keys()].indexOf(tag) + 1}\n` : "", stderr: "" };
+    }
+    if (args[0] === "api" && args.some((value) => /releases\/\d+\/assets/.test(value))) {
+      const id = Number(args.find((value) => /releases\/\d+\/assets/.test(value)).match(/releases\/(\d+)/)[1]);
+      const tag = [...this.releases.keys()][id - 1];
+      return { stdout: [...this.assets(tag)].map(([name, asset]) => `${asset.id}\t${name}`).join("\n") + "\n", stderr: "" };
+    }
+    if (args[0] === "api" && args.includes("DELETE")) {
+      const id = Number(args.find((value) => value.includes("/assets/")).split("/").at(-1));
+      for (const assets of this.releases.values()) for (const [name, asset] of assets) if (asset.id === id) assets.delete(name);
+      return { stdout: "", stderr: "" };
+    }
+    throw new Error(`Unexpected gh arguments: ${args.join(" ")}`);
+  }
+}
+
+function globMatches(name, pattern) {
+  if (!pattern.includes("*")) return name === pattern;
+  const [prefix, suffix] = pattern.split("*");
+  return name.startsWith(prefix) && name.endsWith(suffix);
+}
+
+function commandError(message) {
+  const error = new Error(message);
+  error.code = 1;
+  error.stderr = message;
+  return error;
 }

@@ -11,5 +11,3 @@ Read all core documents in a fresh context.
 - [Pricing](pricing.md): canonical estimator rules and generated-index contract.
 - [Operations](operations.md): credentials, recovery, workflow sequencing,
   and release lifecycle.
-- [Known issues](known-issues.md): accepted limitations and their intended
-  future remedies.

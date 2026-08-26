@@ -16,21 +16,26 @@ record. Large data is stored as GitHub Release assets:
 - The `market-history-latest` rolling release stores validated, complete
   regional archives built by [`scripts/archive.mjs`](../scripts/archive.mjs).
 
-Published archives use digest-versioned names. The collector uploads and
-downloads the new archive to verify its SHA-256 digest before replacing the
-small `latest-<region>.json` pointer or removing the previous regional assets.
-This prevents a failed replacement from destroying the last usable archive.
+Published archives, manifests, and commit markers use immutable names whose
+UTC timestamp is the final filename component. Data uploads and SHA-256
+verification finish before the marker is uploaded. Restore validates markers
+newest-to-oldest and falls back when a newer generation is incomplete or
+damaged. Cleanup retains the newest and preceding valid generations, removes
+obsolete markers first, then deletes only data no retained marker references.
+Legacy fixed-name assets remain a generation-zero fallback until two immutable
+generations have been committed.
 
-After regional collection jobs finish, the workflow reads the stable release
-pointers, verifies each archive digest, runs the canonical estimator, and
-commits the merged price index with the operational status. A missing regional
-archive retains that region's prior index; an invalid pointer or digest fails
-closed.
+After regional collection jobs finish, the workflow resolves the newest valid
+stable marker, verifies its archive digest, runs the canonical estimator, and
+commits the merged price index with the operational status. A region without a
+valid committed generation retains its prior index.
 
 Collectors process one region at a time to avoid competing for the shared API
-rate limit. Each completed artifact is checkpointed before the next artifact
-starts. An interrupted artifact may be downloaded again; previously completed
-artifacts in the same update session are skipped.
+rate limit. Each completed artifact is uploaded under an immutable name and
+verified before a timestamped session marker commits the complete checkpoint
+map. Restore never mixes revisions: it uses the newest marker whose referenced
+artifact digests all validate, otherwise the preceding valid revision. An
+interrupted current artifact may be downloaded again.
 
 The workflow creates one matrix job for every selected region and permits only
 one to run at a time. Scheduled runs select all regions; manual runs expose one

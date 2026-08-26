@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -28,32 +27,16 @@ export async function buildPublishedPrices({
   const temporary = await mkdtemp(path.join(tmpdir(), "market-published-prices-"));
   const regionalIndexes = [];
   try {
-    if (!(await store.releaseExists(store.stableTag))) {
-      console.log("No stable market-history release exists yet; retaining the current price index.");
-      return [];
-    }
     for (const region of regions) {
       const regionDirectory = path.join(temporary, region);
       await mkdir(regionDirectory, { recursive: true });
-      const pointerName = `latest-${region}.json`;
-      if (!(await store.download(store.stableTag, pointerName, regionDirectory))) {
+      const generation = await store.downloadLatestStableGeneration({ directory: regionDirectory, region });
+      if (!generation) {
         console.log(`No stable ${region.toUpperCase()} archive; retaining its current price index.`);
         continue;
       }
-      const pointer = validatePointer(
-        JSON.parse(await readFile(path.join(regionDirectory, pointerName), "utf8")),
-        region,
-      );
-      if (!(await store.download(store.stableTag, pointer.archive, regionDirectory))) {
-        throw new Error(`Stable release archive is missing for region ${region}: ${pointer.archive}.`);
-      }
-      const archive = path.join(regionDirectory, pointer.archive);
-      const actualDigest = createHash("sha256").update(await readFile(archive)).digest("hex");
-      if (actualDigest !== pointer.sha256) {
-        throw new Error(`Stable release archive failed SHA-256 verification for region ${region}.`);
-      }
       const regionalIndex = path.join(regionDirectory, `pricing-index-${region}.json`);
-      await generateIndex({ archive, outputFile: regionalIndex, region });
+      await generateIndex({ archive: generation.archivePath, outputFile: regionalIndex, region });
       regionalIndexes.push(regionalIndex);
     }
     if (regionalIndexes.length > 0) {
@@ -63,19 +46,6 @@ export async function buildPublishedPrices({
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
-}
-
-export function validatePointer(pointer, region) {
-  const archivePattern = new RegExp(`^auction-history-${region}-[a-f0-9]{12}\\.tar\\.gz$`);
-  if (
-    pointer?.schemaVersion !== 1 ||
-    pointer.region !== region ||
-    !archivePattern.test(pointer.archive) ||
-    !/^[a-f0-9]{64}$/.test(pointer.sha256)
-  ) {
-    throw new Error(`Stable release pointer is invalid for region ${region}.`);
-  }
-  return pointer;
 }
 
 async function generateRegionalIndex({ archive, outputFile, region }) {

@@ -16,26 +16,34 @@ artifact whose history is lost therefore recovers from a bounded 30-day
 bootstrap instead of downloading a full year. The default heartbeat is five
 minutes and reports the current page, row, and acquisition-target progress.
 
-After every artifact, the collector atomically writes local state and uploads
-the artifact plus session manifest to the draft staging release. At completion
-it validates and publishes the regional archive, then removes that region's
-staging assets. [`scripts/collect-region.mjs`](../scripts/collect-region.mjs)
-is the supported entry point; `.work/` is disposable local state after a
-regional archive has been published.
+After every artifact, the collector atomically writes local state, uploads and
+verifies an immutable compressed artifact, then commits a session marker that
+references every completed artifact by filename and digest. It retains the
+current and previous valid checkpoint revisions. At completion it commits the
+regional archive with the same marker-last protocol, then removes that region's
+staging assets. [`scripts/collect-region.mjs`](../scripts/collect-region.mjs) is
+the supported entry point; `.work/` is disposable after publication.
 
-After collection, `pricing:published` downloads only stable regional archives,
-verifies their release-pointer SHA-256 digests, rebuilds available regional
+After collection, `pricing:published` downloads only committed stable regional
+archives, verifies their marker SHA-256 digests, rebuilds available regional
 estimates, and preserves prior estimates for unavailable regions. The final
 workflow commit includes both [`data/pricing-index.json`](../data/pricing-index.json)
 and the operational status.
 
 ## Recovery
 
-Restart the same region after interruption. The collector restores the latest
-published region through its `latest-<region>.json` pointer, verifies the
-archive digest, then restores the unfinished session. It skips session-complete
-artifacts and restarts only the incomplete artifact. Never publish an
-incomplete regional archive as the rolling public asset.
+Restart the same region after interruption. The collector validates stable and
+staging markers newest-to-oldest, restores the newest complete referenced set,
+checks that the archive is structurally complete and contains the exact
+published manifest, and falls back to the preceding valid generation when
+necessary. It skips session-complete artifacts and restarts only the incomplete
+artifact. Conflicting valid markers at the same generation or session revision
+fail visibly rather than guessing. Never publish an incomplete regional archive.
+
+All release uploads use unique names and never use `--clobber`. Cleanup begins
+only after the new marker and its references can be restored independently. It
+deletes obsolete markers before unreferenced data, so interruption can leave
+harmless orphan assets but cannot invalidate a retained generation.
 
 Runs stop before GitHub's hard job timeout and retain their checkpoints for the
 next scheduled or manual run. A runtime-budget stop remains a successful job

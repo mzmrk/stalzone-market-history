@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { copyFile, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -81,24 +80,10 @@ test("published pricing verifies the stable archive and preserves regions not re
   const output = path.join(root, "pricing-index.json");
   const archive = path.join(root, "auction-history-ru-123456789abc.tar.gz");
   await writeFile(archive, "verified archive fixture");
-  const sha256 = createHash("sha256").update(await readFile(archive)).digest("hex");
-  const pointer = path.join(root, "latest-ru.json");
-  await writeFile(pointer, `${JSON.stringify({
-    schemaVersion: 1,
-    region: "ru",
-    archive: path.basename(archive),
-    sha256,
-  })}\n`);
   await writeFile(output, `${JSON.stringify(bundle(regionalIndex("eu", 100)))}\n`);
-  const assets = new Map([[path.basename(archive), archive], [path.basename(pointer), pointer]]);
   const store = {
-    stableTag: "market-history-latest",
-    async releaseExists() { return true; },
-    async download(_tag, name, destination) {
-      const source = assets.get(name);
-      if (!source) return false;
-      await copyFile(source, path.join(destination, name));
-      return true;
+    async downloadLatestStableGeneration({ region }) {
+      return region === "ru" ? { archivePath: archive } : null;
     },
   };
 
