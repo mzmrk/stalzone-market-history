@@ -5,7 +5,9 @@ import path from "node:path";
 import test from "node:test";
 import {
   collectRegion,
+  artifactFetchCutoff,
   fetchHistoryRows,
+  mergeHistoryRows,
   validateArtifactCatalog,
   validateAuctionRecord,
 } from "../scripts/collector.mjs";
@@ -239,6 +241,65 @@ test("artifact catalog protection rejects undersized bootstraps and previously p
       previousManifest: { artifacts: { alpha: {}, beta: {} } },
     }),
   );
+});
+
+test("new artifacts bootstrap for 30 days while existing history rolls for 365 days", () => {
+  const capturedAt = Date.parse("2026-08-26T00:00:00.000Z");
+  const retentionCutoff = Date.parse("2025-08-26T00:00:00.000Z");
+  const initialCutoff = Date.parse("2026-07-27T00:00:00.000Z");
+
+  assert.equal(
+    artifactFetchCutoff({ capturedAt, existingRows: [], initialBackfillDays: 30, retentionCutoff }),
+    initialCutoff,
+  );
+  assert.equal(
+    artifactFetchCutoff({
+      capturedAt,
+      existingRows: [{ price: 1, time: "2026-08-01T00:00:00.000Z" }],
+      initialBackfillDays: 30,
+      retentionCutoff,
+    }),
+    retentionCutoff,
+  );
+
+  const merged = mergeHistoryRows({
+    capturedAt: new Date(capturedAt),
+    existingRows: [{ price: 1, time: "2026-01-01T00:00:00.000Z" }],
+    fetchedCutoff: initialCutoff,
+    fetchedRows: [
+      { price: 2, time: "2026-08-01T00:00:00.000Z" },
+      { price: 3, time: "2026-07-01T00:00:00.000Z" },
+    ],
+    windowDays: 365,
+  });
+  assert.deepEqual(
+    merged.map((row) => row.price),
+    [2, 1],
+  );
+});
+
+test("initial acquisition stops once a page crosses the 30-day cutoff", async () => {
+  const pages = [
+    { price: 1, time: "2026-08-20T00:00:00.000Z" },
+    { price: 2, time: "2026-07-20T00:00:00.000Z" },
+    { price: 3, time: "2026-06-20T00:00:00.000Z" },
+  ];
+  let requests = 0;
+  await fetchHistoryRows({
+    artifactId: "alpha",
+    cutoff: Date.parse("2026-07-27T00:00:00.000Z"),
+    credentials,
+    fetchImpl: async () => {
+      const prices = [pages[requests]];
+      requests += 1;
+      return response({ total: pages.length, prices });
+    },
+    newestExistingSale: Number.NEGATIVE_INFINITY,
+    pageLimit: 1,
+    region: "eu",
+  });
+
+  assert.equal(requests, 2);
 });
 
 function createFetch({ histories, onHistory }) {

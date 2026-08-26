@@ -8,12 +8,13 @@ written to manifests, logs, fixtures, release assets, or Git history.
 
 ## Update lifecycle
 
-A regional session has a fixed capture timestamp and cutoff. Existing artifact
-history is refreshed through the newest cached sale plus an overlap page;
-missing history is fetched through the cutoff. The default heartbeat is five
-minutes and reports current page, row, and rolling-window progress. Automated
-runs currently cap acquisition at three API pages per artifact; manifests
-record this cap so consumers can distinguish it from exhaustive history.
+A regional session has a fixed capture timestamp and 365-day retention cutoff.
+An artifact without cached history initially fetches only the previous 30 days.
+Later runs refresh through the newest cached sale plus an overlap page, allowing
+coverage to accumulate naturally while pruning records older than 365 days. An
+artifact whose history is lost therefore recovers from a bounded 30-day
+bootstrap instead of downloading a full year. The default heartbeat is five
+minutes and reports the current page, row, and acquisition-target progress.
 
 After every artifact, the collector atomically writes local state and uploads
 the artifact plus session manifest to the draft staging release. At completion

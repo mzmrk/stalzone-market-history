@@ -27,6 +27,7 @@ export async function collectRegion({
   credentials,
   fetchImpl,
   heartbeatMs = 300_000,
+  initialBackfillDays = 30,
   listingUrl,
   log = console.log,
   maxRuntimeMs = Number.POSITIVE_INFINITY,
@@ -52,19 +53,20 @@ export async function collectRegion({
   const session = await loadSession({
     artifactIds,
     capturedAt,
+    initialBackfillDays,
     maxPagesPerArtifact: recordedMaxPages,
     region,
     sessionFile,
     windowDays,
   });
-  const cutoff = Date.parse(session.cutoff);
+  const retentionCutoff = Date.parse(session.cutoff);
   const sessionCapturedAt = Date.parse(session.capturedAt);
   const completed = new Set(session.completedArtifactIds);
-  let current = { artifactId: null, fetched: 0, pages: 0, percent: 0 };
+  let current = { artifactId: null, fetched: 0, pages: 0, percent: 0, targetDays: null };
 
   const heartbeat = setInterval(() => {
     log(
-      `Heartbeat ${region}: ${completed.size}/${artifactIds.length} artifacts complete, current ${current.artifactId ?? "idle"} (${current.fetched} rows across ${current.pages} pages, ${current.percent.toFixed(1)}% of ${windowDays}-day window).`,
+      `Heartbeat ${region}: ${completed.size}/${artifactIds.length} artifacts complete, current ${current.artifactId ?? "idle"} (${current.fetched} rows across ${current.pages} pages${current.targetDays ? `, ${current.percent.toFixed(1)}% of ${current.targetDays}-day acquisition target` : ""}).`,
     );
   }, heartbeatMs);
   heartbeat.unref?.();
@@ -80,16 +82,23 @@ export async function collectRegion({
         return result(session, false, "time-budget");
       }
 
-      current = { artifactId, fetched: 0, pages: 0, percent: 0 };
       const artifactFile = path.join(artifactsDirectory, `${artifactId}.jsonl`);
       const existingRows = await readJsonLines(artifactFile);
+      const fetchCutoff = artifactFetchCutoff({
+        capturedAt: sessionCapturedAt,
+        existingRows,
+        initialBackfillDays: session.initialBackfillDays,
+        retentionCutoff,
+      });
+      const targetDays = existingRows.length === 0 ? session.initialBackfillDays : session.windowDays;
+      current = { artifactId, fetched: 0, pages: 0, percent: 0, targetDays };
       const newestExistingSale = latestSaleTimestamp(existingRows);
 
       let fetchedRows;
       try {
         fetchedRows = await fetchHistoryRows({
           artifactId,
-          cutoff,
+          cutoff: fetchCutoff,
           credentials,
           fetchImpl,
           newestExistingSale,
@@ -103,7 +112,7 @@ export async function collectRegion({
             current.pages = pagesFetched;
             current.percent = historyExhausted
               ? 100
-              : windowPercent({ capturedAt: sessionCapturedAt, cutoff, oldestTimestamp });
+              : windowPercent({ capturedAt: sessionCapturedAt, cutoff: fetchCutoff, oldestTimestamp });
           },
         });
       } catch (error) {
@@ -120,6 +129,7 @@ export async function collectRegion({
       const mergedRows = mergeHistoryRows({
         capturedAt: new Date(session.capturedAt),
         existingRows,
+        fetchedCutoff: fetchCutoff,
         fetchedRows,
         windowDays,
       });
@@ -157,6 +167,11 @@ export async function collectRegion({
   } finally {
     clearInterval(heartbeat);
   }
+}
+
+export function artifactFetchCutoff({ capturedAt, existingRows, initialBackfillDays, retentionCutoff }) {
+  if (existingRows.length > 0) return retentionCutoff;
+  return Math.max(retentionCutoff, capturedAt - initialBackfillDays * dayMs);
 }
 
 export function validateArtifactCatalog({ artifactIds, minimumArtifactCount = 1, previousManifest = null }) {
@@ -258,12 +273,19 @@ class TimeBudgetExceeded extends Error {
   }
 }
 
-export function mergeHistoryRows({ capturedAt, existingRows, fetchedRows, windowDays }) {
+export function mergeHistoryRows({
+  capturedAt,
+  existingRows,
+  fetchedCutoff = Number.NEGATIVE_INFINITY,
+  fetchedRows,
+  windowDays,
+}) {
   const cutoff = capturedAt.getTime() - windowDays * dayMs;
   const seen = new Set();
   const rows = [];
+  const eligibleFetchedRows = fetchedRows.filter((row) => parseSoldAt(row) >= fetchedCutoff);
 
-  for (const row of [...existingRows, ...fetchedRows].sort(compareRows)) {
+  for (const row of [...existingRows, ...eligibleFetchedRows].sort(compareRows)) {
     validateAuctionRecord(row, "cached");
     const timestamp = parseSoldAt(row);
     if (timestamp < cutoff || timestamp > capturedAt.getTime()) continue;
@@ -303,11 +325,20 @@ async function loadArtifactIds(fetchImpl, listingUrl) {
   ].sort();
 }
 
-async function loadSession({ artifactIds, capturedAt, maxPagesPerArtifact, region, sessionFile, windowDays }) {
+async function loadSession({
+  artifactIds,
+  capturedAt,
+  initialBackfillDays,
+  maxPagesPerArtifact,
+  region,
+  sessionFile,
+  windowDays,
+}) {
   const existing = await readJson(sessionFile);
   if (
     existing?.status === "in-progress" &&
     existing.region === region &&
+    existing.initialBackfillDays === initialBackfillDays &&
     existing.maxPagesPerArtifact === maxPagesPerArtifact
   ) {
     const known = new Set(artifactIds);
@@ -324,6 +355,7 @@ async function loadSession({ artifactIds, capturedAt, maxPagesPerArtifact, regio
     capturedAt: capturedAt.toISOString(),
     cutoff: new Date(capturedAt.getTime() - windowDays * dayMs).toISOString(),
     windowDays,
+    initialBackfillDays,
     maxPagesPerArtifact,
     artifactIds,
     completedArtifactIds: [],
@@ -355,6 +387,7 @@ async function buildManifest({ artifactIds, artifactsDirectory, session }) {
     capturedAt: session.capturedAt,
     cutoff: session.cutoff,
     windowDays: session.windowDays,
+    initialBackfillDays: session.initialBackfillDays,
     maxPagesPerArtifact: session.maxPagesPerArtifact,
     artifactCount: artifactIds.length,
     recordCount,

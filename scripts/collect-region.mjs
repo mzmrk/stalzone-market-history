@@ -31,6 +31,7 @@ const result = await collectRegion({
   credentials: { clientId, clientSecret },
   fetchImpl: fetch,
   heartbeatMs: integerEnvironment("MARKET_HEARTBEAT_MS", 300_000),
+  initialBackfillDays: integerEnvironment("MARKET_INITIAL_BACKFILL_DAYS", 30),
   listingUrl,
   maxRuntimeMs: integerEnvironment(
     "MARKET_MAX_RUNTIME_MS",

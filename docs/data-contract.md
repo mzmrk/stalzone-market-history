@@ -16,10 +16,10 @@ the API object structure instead of flattening `additional` or adding capture
 fields. Records are deduplicated, ordered newest first, and limited to the
 manifest's rolling time window.
 
-The manifest identifies the region, source endpoint, capture time, cutoff,
-artifact set, record counts, acquisition page cap, and per-artifact time
-coverage. Consumers must use the manifest instead of inferring completeness
-from filenames.
+The manifest identifies the region, source endpoint, capture time, retention
+cutoff, initial backfill period, artifact set, record counts, acquisition page
+cap, and per-artifact time coverage. Consumers must use the manifest instead
+of inferring completeness from filenames.
 
 ## Compatibility
 
