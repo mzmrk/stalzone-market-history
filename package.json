@@ -1,0 +1,15 @@
+{
+  "name": "stalzone-market-history",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "docs:check": "node /home/node/.codex/skills/maintain-project-documentation/scripts/validate-docs.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
+

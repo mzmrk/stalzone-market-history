@@ -1,0 +1,41 @@
+# STALZONE Market History
+
+A rolling, machine-readable archive of artifact auction history from the
+official STALZONE API. The dataset covers EU, RU, NA, SEA, and NEA and is
+published as compressed GitHub Release assets.
+
+## Data
+
+The rolling release will provide one archive per region:
+
+```text
+auction-history-eu.tar.gz
+auction-history-ru.tar.gz
+auction-history-na.tar.gz
+auction-history-sea.tar.gz
+auction-history-nea.tar.gz
+```
+
+Each archive contains a manifest and one JSON Lines file per artifact. Sale
+objects are preserved as returned by the API; collection metadata is kept in
+the manifest.
+
+See [the data contract](docs/data-contract.md) before consuming the archive.
+
+## Development
+
+Node.js 22 or newer is required.
+
+```bash
+npm test
+npm run docs:check
+```
+
+The collection scripts require an approved STALZONE API application. Never
+commit its client secret.
+
+## Legal
+
+Repository software is licensed under the [MIT License](LICENSE). API data is
+not relicensed under MIT; see [DATA-NOTICE.md](DATA-NOTICE.md).
+
