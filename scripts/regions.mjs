@@ -7,8 +7,3 @@ export function normalizeRegion(value) {
   }
   return region;
 }
-
-export function nextRegion(region) {
-  const index = regions.indexOf(normalizeRegion(region));
-  return regions[index + 1] ?? null;
-}

@@ -26,9 +26,10 @@ rate limit. Each completed artifact is checkpointed before the next artifact
 starts. An interrupted artifact may be downloaded again; previously completed
 artifacts in the same update session are skipped.
 
-The collector stops after a soft runtime budget and dispatches the same region
-again. A completed region dispatches the next region in the fixed EU, RU, NA,
-SEA, NEA chain; workflow concurrency keeps the shared API usage sequential.
+The workflow creates one matrix job for every selected region and permits only
+one to run at a time. Scheduled runs select all regions; manual runs expose one
+default-enabled checkbox per region. `fail-fast: false` isolates failures, so
+one regional job does not cancel the remaining matrix jobs.
 
 ## Consumer boundary
 

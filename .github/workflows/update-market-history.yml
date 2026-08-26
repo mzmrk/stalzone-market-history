@@ -1,20 +1,33 @@
 name: Update market history
-run-name: Market history (${{ inputs.region || 'eu' }})
+run-name: Market history (${{ github.event_name == 'schedule' && 'all regions' || 'selected regions' }})
 
 on:
   schedule:
     - cron: "23 4 * * 1"
   workflow_dispatch:
     inputs:
-      region:
-        description: Region to update or resume
-        required: true
-        type: choice
-        options: [eu, ru, na, sea, nea]
-        default: eu
+      eu:
+        description: Update EU
+        type: boolean
+        default: true
+      ru:
+        description: Update RU
+        type: boolean
+        default: true
+      na:
+        description: Update NA
+        type: boolean
+        default: true
+      sea:
+        description: Update SEA
+        type: boolean
+        default: true
+      nea:
+        description: Update NEA
+        type: boolean
+        default: true
 
 permissions:
-  actions: write
   contents: write
 
 concurrency:
@@ -22,15 +35,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  collect:
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
-    env:
-      GH_TOKEN: ${{ github.token }}
-      MARKET_REGION: ${{ inputs.region || 'eu' }}
-      MARKET_MAX_PAGES_PER_ARTIFACT: 3
-      STALZONE_CLIENT_ID: ${{ vars.STALZONE_CLIENT_ID }}
-      STALZONE_CLIENT_SECRET: ${{ secrets.STALZONE_CLIENT_SECRET }}
+    outputs:
+      has_regions: ${{ steps.regions.outputs.has_regions }}
+      regions: ${{ steps.regions.outputs.regions }}
+    steps:
+      - name: Build selected-region matrix
+        id: regions
+        env:
+          SELECT_EU: ${{ github.event_name == 'schedule' || inputs.eu }}
+          SELECT_RU: ${{ github.event_name == 'schedule' || inputs.ru }}
+          SELECT_NA: ${{ github.event_name == 'schedule' || inputs.na }}
+          SELECT_SEA: ${{ github.event_name == 'schedule' || inputs.sea }}
+          SELECT_NEA: ${{ github.event_name == 'schedule' || inputs.nea }}
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const regions = ["eu", "ru", "na", "sea", "nea"].filter(
+              region => process.env[`SELECT_${region.toUpperCase()}`] === "true",
+            );
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `regions=${JSON.stringify(regions)}\n`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `has_regions=${regions.length > 0}\n`);
+          '
+
+  verify:
+    runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -43,12 +73,30 @@ jobs:
       - name: Verify collector
         run: npm test && npm run docs:check
 
-      - name: Collect or resume region
-        id: collect
-        run: npm run collect -- "$MARKET_REGION"
+  collect:
+    needs: [plan, verify]
+    if: needs.plan.outputs.has_regions == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        region: ${{ fromJSON(needs.plan.outputs.regions) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MARKET_REGION: ${{ matrix.region }}
+      MARKET_MAX_PAGES_PER_ARTIFACT: 3
+      STALZONE_CLIENT_ID: ${{ vars.STALZONE_CLIENT_ID }}
+      STALZONE_CLIENT_SECRET: ${{ secrets.STALZONE_CLIENT_SECRET }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
 
-      - name: Continue regional chain
-        if: steps.collect.outputs.next_region != ''
-        env:
-          NEXT_REGION: ${{ steps.collect.outputs.next_region }}
-        run: gh workflow run update-market-history.yml --ref main -f region="$NEXT_REGION"
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Collect or resume region
+        run: npm run collect -- "$MARKET_REGION"
