@@ -3,7 +3,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { collectRegion, fetchHistoryRows, validateAuctionRecord } from "../scripts/collector.mjs";
+import {
+  collectRegion,
+  fetchHistoryRows,
+  validateArtifactCatalog,
+  validateAuctionRecord,
+} from "../scripts/collector.mjs";
 
 const credentials = { clientId: "test", clientSecret: "secret" };
 
@@ -211,6 +216,28 @@ test("publishing fails closed when an auction record contains a personal identif
   assert.throws(
     () => validateAuctionRecord({ price: 10, time: "2026-08-25T00:00:00Z", seller_id: "player-1" }),
     /blocked personal identifier field: seller_id/,
+  );
+});
+
+test("artifact catalog protection rejects undersized bootstraps and previously published omissions", () => {
+  assert.throws(
+    () => validateArtifactCatalog({ artifactIds: ["alpha"], minimumArtifactCount: 2 }),
+    /expected at least 2/,
+  );
+  assert.throws(
+    () =>
+      validateArtifactCatalog({
+        artifactIds: ["alpha", "gamma"],
+        previousManifest: { artifacts: { alpha: {}, beta: {} } },
+      }),
+    /dropped 1 previously published items \(beta\)/,
+  );
+  assert.doesNotThrow(() =>
+    validateArtifactCatalog({
+      artifactIds: ["alpha", "beta", "gamma"],
+      minimumArtifactCount: 2,
+      previousManifest: { artifacts: { alpha: {}, beta: {} } },
+    }),
   );
 });
 

@@ -31,6 +31,7 @@ export async function collectRegion({
   log = console.log,
   maxRuntimeMs = Number.POSITIVE_INFINITY,
   maxPagesPerArtifact = Number.POSITIVE_INFINITY,
+  minimumArtifactCount = 1,
   now = () => Date.now(),
   pageLimit = 200,
   progressEvery = 1,
@@ -46,6 +47,8 @@ export async function collectRegion({
   await mkdir(artifactsDirectory, { recursive: true });
 
   const artifactIds = await loadArtifactIds(fetchImpl, listingUrl);
+  const previousManifest = await readJson(path.join(regionDirectory, "manifest.json"));
+  validateArtifactCatalog({ artifactIds, minimumArtifactCount, previousManifest });
   const session = await loadSession({
     artifactIds,
     capturedAt,
@@ -153,6 +156,25 @@ export async function collectRegion({
     return { ...result(session, true, null), manifest, manifestFile, regionDirectory };
   } finally {
     clearInterval(heartbeat);
+  }
+}
+
+export function validateArtifactCatalog({ artifactIds, minimumArtifactCount = 1, previousManifest = null }) {
+  if (artifactIds.length < minimumArtifactCount) {
+    throw new Error(
+      `Artifact catalog contains ${artifactIds.length} items; expected at least ${minimumArtifactCount}. Refusing to prune cached history.`,
+    );
+  }
+
+  const previousIds = Object.keys(previousManifest?.artifacts ?? {});
+  const currentIds = new Set(artifactIds);
+  const missingIds = previousIds.filter((artifactId) => !currentIds.has(artifactId));
+  if (missingIds.length > 0) {
+    const preview = missingIds.slice(0, 5).join(", ");
+    const remainder = missingIds.length > 5 ? ` and ${missingIds.length - 5} more` : "";
+    throw new Error(
+      `Artifact catalog dropped ${missingIds.length} previously published items (${preview}${remainder}). Refusing to prune cached history.`,
+    );
   }
 }
 

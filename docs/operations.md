@@ -42,3 +42,9 @@ workflow run.
 The weekly workflow selects all five regions. Manual dispatch exposes five
 default-enabled region checkboxes; unselected regions are omitted from the
 matrix. The repository must allow Actions to write Release assets.
+
+Before collection starts, the live artifact listing must contain at least 100
+items and every artifact in the previously published regional manifest. A
+smaller catalog fails the run before collection or pruning, preventing a
+temporary upstream listing regression from deleting cached history. An
+intentional artifact removal therefore requires an explicit migration.

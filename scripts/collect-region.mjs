@@ -36,6 +36,7 @@ const result = await collectRegion({
     process.env.GITHUB_ACTIONS ? 5 * 60 * 60 * 1_000 + 20 * 60 * 1_000 : Number.POSITIVE_INFINITY,
   ),
   maxPagesPerArtifact: integerEnvironment("MARKET_MAX_PAGES_PER_ARTIFACT", Number.POSITIVE_INFINITY),
+  minimumArtifactCount: integerEnvironment("MARKET_MIN_ARTIFACT_COUNT", 100),
   pageLimit: 200,
   progressEvery: integerEnvironment("MARKET_PROGRESS_EVERY", 1),
   region,
