@@ -70,6 +70,61 @@ test("release checkpoint uploads the completed raw artifact before the session m
   }
 });
 
+test("region restore follows the stable pointer and verifies its archive", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "market-restore-test-"));
+  const source = path.join(directory, "source");
+  const workRoot = path.join(directory, "work");
+  const assets = new Map();
+  try {
+    await mkdir(path.join(source, "artifacts"), { recursive: true });
+    await writeFile(path.join(source, "artifacts", "alpha.jsonl"), '{"price":1,"time":"2026-01-01T00:00:00Z"}\n');
+    await writeFile(
+      path.join(source, "manifest.json"),
+      JSON.stringify({ status: "complete", artifacts: { alpha: { records: 1 } } }),
+    );
+    const built = await buildRegionArchive({
+      archive: path.join(directory, "source.tar.gz"),
+      regionDirectory: source,
+    });
+    const versionedName = `auction-history-eu-${built.digest.slice(0, 12)}.tar.gz`;
+    assets.set(versionedName, await readFile(built.archive));
+    assets.set(
+      "latest-eu.json",
+      Buffer.from(
+        JSON.stringify({ schemaVersion: 1, region: "eu", archive: versionedName, sha256: built.digest }),
+      ),
+    );
+    const store = new GitHubReleaseStore({
+      repository: "owner/data",
+      execFileImpl: async (command, args) => {
+        if (command === "tar") return execFileAsync(command, args);
+        if (args[0] === "release" && args[1] === "view") {
+          if (args[2] === "market-history-latest") return { stdout: "", stderr: "" };
+          const error = new Error("missing");
+          error.code = 1;
+          throw error;
+        }
+        if (args[0] === "release" && args[1] === "download") {
+          const name = args[args.indexOf("--pattern") + 1];
+          const output = args[args.indexOf("--dir") + 1];
+          await copyFileFromMemory(assets.get(name), path.join(output, name));
+          return { stdout: "", stderr: "" };
+        }
+        throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+      },
+    });
+
+    await store.restoreRegion({ region: "eu", workRoot });
+
+    assert.equal(
+      await readFile(path.join(workRoot, "eu", "artifacts", "alpha.jsonl"), "utf8"),
+      await readFile(path.join(source, "artifacts", "alpha.jsonl"), "utf8"),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("stable publishing verifies the versioned archive before moving its latest pointer", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "market-publish-test-"));
   const commands = [];

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -28,11 +29,29 @@ export class GitHubReleaseStore {
     await mkdir(regionDirectory, { recursive: true });
     const temporary = await mkdtemp(path.join(tmpdir(), `market-history-restore-${region}-`));
     try {
-      const archiveName = `auction-history-${region}.tar.gz`;
       if (await this.releaseExists(this.stableTag)) {
-        const downloaded = await this.download(this.stableTag, archiveName, temporary);
+        const pointerName = `latest-${region}.json`;
+        const downloaded = await this.download(this.stableTag, pointerName, temporary);
         if (downloaded) {
-          await this.execFile("tar", ["-xzf", path.join(temporary, archiveName), "-C", regionDirectory]);
+          const pointer = JSON.parse(await readFile(path.join(temporary, pointerName), "utf8"));
+          const archivePattern = new RegExp(`^auction-history-${region}-[a-f0-9]{12}\\.tar\\.gz$`);
+          if (
+            pointer.schemaVersion !== 1 ||
+            pointer.region !== region ||
+            !archivePattern.test(pointer.archive) ||
+            !/^[a-f0-9]{64}$/.test(pointer.sha256)
+          ) {
+            throw new Error(`Stable release pointer is invalid for region ${region}.`);
+          }
+          if (!(await this.download(this.stableTag, pointer.archive, temporary))) {
+            throw new Error(`Stable release archive is missing for region ${region}: ${pointer.archive}.`);
+          }
+          const archive = path.join(temporary, pointer.archive);
+          const actual = createHash("sha256").update(await readFile(archive)).digest("hex");
+          if (actual !== pointer.sha256) {
+            throw new Error(`Stable release archive failed SHA-256 verification for region ${region}.`);
+          }
+          await this.execFile("tar", ["-xzf", archive, "-C", regionDirectory]);
         }
       }
 
@@ -146,7 +165,6 @@ export class GitHubReleaseStore {
     const verificationDirectory = path.join(directory, "verify");
     await mkdir(verificationDirectory, { recursive: true });
     await this.download(this.stableTag, assetName, verificationDirectory);
-    const { createHash } = await import("node:crypto");
     const actual = createHash("sha256")
       .update(await readFile(path.join(verificationDirectory, assetName)))
       .digest("hex");

@@ -23,9 +23,10 @@ regional archive has been published.
 ## Recovery
 
 Restart the same region after interruption. The collector restores the latest
-published region and unfinished session, skips session-complete artifacts, and
-restarts only the incomplete artifact. Never publish an incomplete regional
-archive as the rolling public asset.
+published region through its `latest-<region>.json` pointer, verifies the
+archive digest, then restores the unfinished session. It skips session-complete
+artifacts and restarts only the incomplete artifact. Never publish an
+incomplete regional archive as the rolling public asset.
 
 Runs stop before GitHub's hard job timeout and request a continuation. Regions
 remain sequential; a failure in one region must not delete or replace another
