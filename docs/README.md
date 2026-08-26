@@ -10,3 +10,4 @@ Read all core documents in a fresh context.
   and release lifecycle.
 - [Known issues](known-issues.md): accepted limitations and their intended
   future remedies.
+- [TODO](todo.md): planned changes that have not been implemented.
