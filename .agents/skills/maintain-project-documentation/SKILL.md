@@ -10,8 +10,10 @@ authoritative source without repeating investigation.
 
 ## Boundaries
 
-- During documentation maintenance, read any repository file needed as evidence, but write only under `docs/` and,
-  when its workflow applies, the root `README.md`. The user's primary task may authorize other files.
+- "Primary task" means the work the user currently requested. During documentation maintenance, read any repository
+  file needed as evidence, but write only under `docs/` and, when its workflow applies, the root `README.md`.
+  Documentation maintenance triggered by this skill does not itself authorize other changes; separately authorized
+  primary-task changes are unaffected.
 - Keep the root `README.md` outside project memory, technical authority, validator scope, and the core word budget.
 - Do not change code, tests, configuration, repository policy, generated artifacts, or other files solely as a
   documentation safeguard. Report the needed safeguard unless the primary task authorizes it.
@@ -45,11 +47,12 @@ only when its indexed condition applies or while auditing references. Inspect ev
 
 ### 2. Map and verify behavior
 
-**Map architecture.** Before structural work, map the requirement to existing owners, contracts, state and data flow,
-dependency direction, lifecycle or persistence, and test seams. Keep an existing boundary when its responsibility fits.
-Split or add a module, component, type, or service only for a distinct responsibility, lifecycle, dependency boundary, or
-independently testable contract. Check affected producers and consumers; do not expand a coordinator that already owns
-unrelated concerns.
+**Map architecture.** Before changes affecting behavior or structure, identify relevant owners, contracts, state and data
+flows, dependency direction, lifecycle or persistence, and test seams as applicable. Keep existing boundaries when their
+responsibilities fit; adjust them within the task’s scope when a concrete ownership problem warrants it. Add, split,
+combine, or remove modules and abstractions to clarify responsibilities or contracts, weighing their benefits against
+added indirection. Keep behavior easy to find and follow. Check affected producers and consumers; avoid adding unrelated
+responsibilities to coordinators. Keep the investigation proportional to the task.
 
 **Trace authoritative behavior.** Trace affected behavior through active implementation, callers, schemas, configuration,
 scripts, persistence, tests, and generated contracts. Confirm plausible files are active through imports, registration,
