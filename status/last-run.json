@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "workflow": "update-market-history",
-  "attemptedAt": "2026-10-12T14:02:04.928Z",
-  "result": "failure",
+  "attemptedAt": "2026-10-14T18:22:42.531Z",
+  "result": "success",
   "regions": [
     "eu",
     "ru",
@@ -10,6 +10,6 @@
     "sea",
     "nea"
   ],
-  "runId": "38247483248",
-  "runUrl": "https://github.com/mzmrk/stalzone-market-history/actions/runs/38247483248"
+  "runId": "38601719452",
+  "runUrl": "https://github.com/mzmrk/stalzone-market-history/actions/runs/38601719452"
 }
