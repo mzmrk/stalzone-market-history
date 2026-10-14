@@ -53,12 +53,15 @@ failure in one region must not delete, replace, or prevent an update of another
 region.
 
 Auction-page network exceptions and HTTP `429` or `5xx` responses retry inside
-the current job with exponential backoff. Release-asset deletion also uses
-bounded exponential retries; a missing asset is treated as already deleted so a
-lost successful response remains idempotent. A persistent cleanup failure still
-fails the region after its latest marker is safely committed. A valid API page
-resets the progress watchdog; five minutes without one fails the job. No
-collector result creates another workflow run.
+the current job with exponential backoff. GitHub Release access uses one cached
+release and asset inventory per job, spaces mutating requests, and honors
+GitHub's `Retry-After` or primary-rate-limit reset time before retrying. Uploads
+are accepted only when GitHub reports the expected size and SHA-256 digest; a
+lost successful upload response is reconciled by refreshing the inventory.
+Only an explicit asset `404` is treated as already deleted. A persistent
+cleanup failure still fails the region after its latest marker is safely
+committed. A valid auction API page resets the progress watchdog; five minutes
+without one fails the job. No collector result creates another workflow run.
 
 The weekly workflow selects all five regions. Manual dispatch exposes five
 default-enabled region checkboxes; unselected regions are omitted from the

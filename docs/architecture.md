@@ -16,9 +16,17 @@ record. Large data is stored as GitHub Release assets:
 - The `market-history-latest` rolling release stores validated, complete
   regional archives built by [`scripts/archive.mjs`](../scripts/archive.mjs).
 
+[`scripts/github-release-client.mjs`](../scripts/github-release-client.mjs)
+accesses those releases through GitHub's REST API. It resolves releases and
+asset inventories once per job, then maintains that inventory as immutable
+assets are uploaded or deleted. This keeps request volume proportional to the
+data changed instead of repeatedly rediscovering the same release state.
+
 Published archives, manifests, and commit markers use immutable names whose
 UTC timestamp is the final filename component. Data uploads and SHA-256
-verification finish before the marker is uploaded. Restore validates markers
+verification from GitHub's uploaded-asset response finish before the marker is
+uploaded. An ambiguous lost upload response is reconciled against a refreshed
+asset inventory before retrying. Restore validates markers
 newest-to-oldest and falls back when a newer generation is incomplete or
 damaged. Cleanup retains the newest and preceding valid generations, removes
 obsolete markers first, then deletes only data no retained marker references.

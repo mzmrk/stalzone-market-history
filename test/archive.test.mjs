@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { buildRegionArchive, validateRegionArchive } from "../scripts/archive.mjs";
+import { GitHubApiError, GitHubReleaseClient } from "../scripts/github-release-client.mjs";
 import { GitHubReleaseStore } from "../scripts/github-releases.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -40,16 +41,97 @@ test("checkpoint commits immutable data before its timestamped session marker", 
 
     await store.checkpoint({ artifactFile, artifactId: "alpha", region: "eu", sessionFile });
 
-    const uploads = backend.commands.filter((command) => command[1] === "release" && command[2] === "upload");
+    const uploads = backend.events.filter((event) => event.type === "upload");
     assert.equal(uploads.length, 2);
-    assert.doesNotMatch(uploads.flat().join(" "), /--clobber/);
-    assert.match(path.basename(uploads[0][4]), /^checkpoint-eu-alpha-[a-f0-9]{12}-20260826T120000000Z\.jsonl\.gz$/);
-    assert.match(path.basename(uploads[1][4]), /^checkpoint-session-eu-r000001-[a-f0-9]{12}-20260826T120000000Z\.json$/);
-    const marker = backend.jsonAsset("market-history-staging", path.basename(uploads[1][4]));
+    assert.match(path.basename(uploads[0].file), /^checkpoint-eu-alpha-[a-f0-9]{12}-20260826T120000000Z\.jsonl\.gz$/);
+    assert.match(path.basename(uploads[1].file), /^checkpoint-session-eu-r000001-[a-f0-9]{12}-20260826T120000000Z\.json$/);
+    const marker = backend.jsonAsset("market-history-staging", path.basename(uploads[1].file));
     assert.equal(marker.session.completedArtifactIds[0], "alpha");
-    assert.equal(marker.artifacts.alpha.name, path.basename(uploads[0][4]));
-    assert.ok(backend.commands.some((command) => command[1] === "release" && command[2] === "view" && command.includes("apiUrl")));
-    assert.ok(!backend.commands.some((command) => command.some((value) => value.includes?.("releases?per_page=100"))));
+    assert.equal(marker.artifacts.alpha.name, path.basename(uploads[0].file));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("checkpoint refuses to publish a marker when GitHub reports the wrong upload digest", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "market-checkpoint-digest-test-"));
+  const backend = new FakeReleaseBackend();
+  const uploadAsset = backend.uploadAsset.bind(backend);
+  backend.uploadAsset = async (...args) => ({
+    ...await uploadAsset(...args),
+    digest: `sha256:${"0".repeat(64)}`,
+  });
+  try {
+    const artifactFile = path.join(directory, "alpha.jsonl");
+    const sessionFile = path.join(directory, "session.json");
+    await writeFile(artifactFile, '{"price":1}\n');
+    await writeFile(sessionFile, `${JSON.stringify(session({ completedArtifactIds: ["alpha"] }))}\n`);
+
+    await assert.rejects(
+      backend.store().checkpoint({ artifactFile, artifactId: "alpha", region: "eu", sessionFile }),
+      /failed GitHub upload verification/,
+    );
+
+    assert.equal(
+      backend.assetNames("market-history-staging").filter((name) => name.startsWith("checkpoint-session-eu-")).length,
+      0,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("release upload recovers when GitHub stores the asset but its response is lost", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "market-upload-response-test-"));
+  const api = new CountingGitHubApi();
+  api.loseNextUploadResponse = true;
+  const client = new GitHubReleaseClient({
+    repository: "owner/data",
+    token: "test-token",
+    fetchImpl: api.fetch.bind(api),
+    mutationIntervalMs: 0,
+    sleepImpl: async () => {},
+  });
+  const file = path.join(directory, "checkpoint.json");
+  try {
+    await writeFile(file, '{"saved":true}\n');
+    const uploaded = await client.uploadAsset("market-history-staging", file);
+
+    assert.equal(uploaded.name, "checkpoint.json");
+    assert.equal(api.count("POST"), 1, "an ambiguous successful upload must not be repeated");
+    assert.equal(api.count("GET"), 3, "the asset inventory should be refreshed after the lost response");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a full 103-artifact checkpoint session stays within a bounded GitHub request budget", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "market-checkpoint-budget-test-"));
+  const api = new CountingGitHubApi();
+  const client = new GitHubReleaseClient({
+    repository: "owner/data",
+    token: "test-token",
+    fetchImpl: api.fetch.bind(api),
+    mutationIntervalMs: 0,
+  });
+  const store = new GitHubReleaseStore({ repository: "owner/data", releaseClient: client });
+  const artifactFile = path.join(directory, "artifact.jsonl");
+  const sessionFile = path.join(directory, "session.json");
+  const completedArtifactIds = [];
+  try {
+    for (let index = 0; index < 103; index += 1) {
+      const artifactId = `artifact-${String(index).padStart(3, "0")}`;
+      completedArtifactIds.push(artifactId);
+      const updatedAt = new Date(Date.parse("2026-08-26T12:00:00.000Z") + index * 1_000).toISOString();
+      await writeFile(artifactFile, `${JSON.stringify({ artifactId, price: index + 1 })}\n`);
+      await writeFile(sessionFile, `${JSON.stringify(session({ completedArtifactIds, updatedAt }))}\n`);
+      await store.checkpoint({ artifactFile, artifactId, region: "eu", sessionFile });
+    }
+
+    assert.equal(api.count("GET"), 2, "release and asset inventories should each be fetched once");
+    assert.equal(api.count("POST"), 206, "each checkpoint uploads one artifact and one marker");
+    assert.equal(api.count("DELETE"), 101, "only superseded markers should require deletion");
+    assert.ok(api.requests.length <= 350, `expected at most 350 requests, received ${api.requests.length}`);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -158,15 +240,14 @@ test("stable publication retains two immutable generations and cleans older asse
       .filter((name) => name.startsWith("generation-eu-"))
       .find((name) => backend.jsonAsset("market-history-latest", name).generation === 1);
     const firstMarker = backend.jsonAsset("market-history-latest", firstMarkerName);
-    const commandOffset = backend.commands.length;
+    const eventOffset = backend.events.length;
     await store.publishRegion({ ...third, region: "eu" });
-    const thirdPublish = backend.commands.slice(commandOffset);
+    const thirdPublish = backend.events.slice(eventOffset);
     const markerUpload = thirdPublish.findIndex(
-      (command) => command[1] === "release" && command[2] === "upload" && path.basename(command[4]).startsWith("generation-eu-"),
+      (event) => event.type === "upload" && path.basename(event.file).startsWith("generation-eu-"),
     );
-    const firstDelete = thirdPublish.findIndex((command) => command[1] === "api" && command.includes("DELETE"));
+    const firstDelete = thirdPublish.findIndex((event) => event.type === "delete");
     assert.ok(markerUpload >= 0 && firstDelete > markerUpload);
-    assert.doesNotMatch(thirdPublish.flat().join(" "), /--clobber/);
     assert.ok(!backend.assetNames("market-history-latest").includes(firstMarkerName));
     assert.ok(!backend.assetNames("market-history-latest").includes(firstMarker.archive.name));
     assert.ok(!backend.assetNames("market-history-latest").includes(firstMarker.manifest.name));
@@ -176,58 +257,61 @@ test("stable publication retains two immutable generations and cleans older asse
   }
 });
 
-test("release asset deletion retries a transient response failure without reading a body", async () => {
-  const calls = [];
-  const delays = [];
-  const store = new GitHubReleaseStore({
-    repository: "owner/data",
-    deleteRetryDelaysMs: [25],
-    sleepImpl: async (delay) => delays.push(delay),
-    execFileImpl: async (command, args) => {
-      calls.push([command, ...args]);
-      if (calls.length === 1) throw commandError("unexpected end of JSON input");
-      return { stdout: "", stderr: "" };
-    },
-  });
-
-  await store.deleteAsset(123);
-
-  assert.deepEqual(delays, [25]);
-  assert.equal(calls.length, 2);
-  assert.deepEqual(calls[0], ["gh", "api", "--silent", "--method", "DELETE", "repos/owner/data/releases/assets/123"]);
-});
-
-test("release asset deletion treats not found after a lost response as success", async () => {
+test("GitHub release client waits for the primary rate-limit reset and retries", async () => {
   let calls = 0;
-  const store = new GitHubReleaseStore({
+  const delays = [];
+  const client = new GitHubReleaseClient({
     repository: "owner/data",
-    deleteRetryDelaysMs: [0],
-    sleepImpl: async () => {},
-    execFileImpl: async () => {
+    token: "test-token",
+    mutationIntervalMs: 0,
+    nowImpl: () => 100_000,
+    sleepImpl: async (delay) => delays.push(delay),
+    fetchImpl: async () => {
       calls += 1;
-      if (calls === 1) throw commandError("unexpected end of JSON input");
-      throw commandError("gh: Not Found (HTTP 404)");
+      if (calls === 1) {
+        return jsonResponse({ message: "API rate limit exceeded for installation" }, 403, {
+          "x-ratelimit-remaining": "0",
+          "x-ratelimit-reset": "101",
+        });
+      }
+      return jsonResponse([]);
     },
   });
 
-  await store.deleteAsset(456);
+  assert.equal(await client.releaseExists("missing"), false);
+
+  assert.deepEqual(delays, [2_000]);
   assert.equal(calls, 2);
 });
 
-test("release asset deletion fails after exhausting bounded retries", async () => {
+test("GitHub release client treats only an explicit asset 404 as already deleted", async () => {
   let calls = 0;
-  const store = new GitHubReleaseStore({
+  const client = new GitHubReleaseClient({
     repository: "owner/data",
-    deleteRetryDelaysMs: [0, 0],
-    sleepImpl: async () => {},
-    execFileImpl: async () => {
+    token: "test-token",
+    mutationIntervalMs: 0,
+    fetchImpl: async () => {
       calls += 1;
-      throw commandError("unexpected end of JSON input");
+      return jsonResponse({ message: "Not Found" }, 404);
     },
   });
 
-  await assert.rejects(store.deleteAsset(789), /unexpected end of JSON input/);
-  assert.equal(calls, 3);
+  await client.deleteAsset(456);
+  assert.equal(calls, 1);
+});
+
+test("GitHub release lookup propagates a non-rate-limit authorization failure", async () => {
+  const client = new GitHubReleaseClient({
+    repository: "owner/data",
+    token: "test-token",
+    mutationIntervalMs: 0,
+    fetchImpl: async () => jsonResponse({ message: "Forbidden" }, 403),
+  });
+
+  await assert.rejects(
+    client.releaseExists("market-history-staging"),
+    (error) => error instanceof GitHubApiError && error.status === 403,
+  );
 });
 
 function session(overrides = {}) {
@@ -255,12 +339,16 @@ async function regionFixture(root, name, capturedAt, price) {
 class FakeReleaseBackend {
   constructor() {
     this.releases = new Map();
-    this.commands = [];
+    this.events = [];
     this.nextAssetId = 1;
   }
 
   store() {
-    return new GitHubReleaseStore({ repository: "owner/data", execFileImpl: this.execFile.bind(this) });
+    return new GitHubReleaseStore({
+      repository: "owner/data",
+      execFileImpl: execFileAsync,
+      releaseClient: this,
+    });
   }
 
   assets(tag) {
@@ -270,69 +358,118 @@ class FakeReleaseBackend {
 
   assetNames(tag) { return [...this.assets(tag).keys()]; }
   jsonAsset(tag, name) { return JSON.parse(this.assets(tag).get(name).bytes.toString("utf8")); }
-  put(tag, name, bytes) { this.assets(tag).set(name, { id: this.nextAssetId++, bytes: Buffer.from(bytes) }); }
+  put(tag, name, bytes) {
+    const body = Buffer.from(bytes);
+    const asset = {
+      id: this.nextAssetId++,
+      name,
+      bytes: body,
+      size: body.length,
+      state: "uploaded",
+      digest: `sha256:${createHash("sha256").update(body).digest("hex")}`,
+    };
+    this.assets(tag).set(name, asset);
+    return asset;
+  }
 
-  async execFile(command, args) {
-    this.commands.push([command, ...args]);
-    if (command === "tar") return execFileAsync(command, args);
-    if (command !== "gh") throw new Error(`Unexpected command: ${command}`);
-    if (args[0] === "release" && args[1] === "view") {
-      if (this.releases.has(args[2])) {
-        const id = [...this.releases.keys()].indexOf(args[2]) + 1;
-        return { stdout: args.includes("--json") ? `https://api.github.com/repos/owner/data/releases/${id}\n` : "", stderr: "" };
-      }
-      throw commandError("release missing");
+  async releaseExists(tag) {
+    this.events.push({ type: "release-exists", tag });
+    return this.releases.has(tag);
+  }
+
+  async ensureRelease({ tag }) {
+    this.events.push({ type: "ensure-release", tag });
+    this.assets(tag);
+  }
+
+  async listAssets(tag) {
+    this.events.push({ type: "list-assets", tag });
+    return [...this.assets(tag)].map(([name, asset]) => ({ ...asset, name }));
+  }
+
+  async uploadAsset(tag, file) {
+    this.events.push({ type: "upload", tag, file });
+    const name = path.basename(file);
+    if (this.assets(tag).has(name)) return this.assets(tag).get(name);
+    return this.put(tag, name, await readFile(file));
+  }
+
+  async downloadAsset(tag, name, directory) {
+    this.events.push({ type: "download", tag, name });
+    const asset = this.assets(tag).get(name);
+    if (!asset) return false;
+    await mkdir(directory, { recursive: true });
+    await writeFile(path.join(directory, name), asset.bytes);
+    return true;
+  }
+
+  async deleteAsset(id) {
+    this.events.push({ type: "delete", id });
+    for (const assets of this.releases.values()) {
+      for (const [name, asset] of assets) if (asset.id === id) assets.delete(name);
     }
-    if (args[0] === "release" && args[1] === "create") {
-      this.assets(args[2]);
-      return { stdout: "", stderr: "" };
-    }
-    if (args[0] === "release" && args[1] === "upload") {
-      const tag = args[2];
-      for (const file of args.slice(3, args.indexOf("--repo"))) {
-        const name = path.basename(file);
-        if (this.assets(tag).has(name)) throw new Error(`asset already exists: ${name}`);
-        this.put(tag, name, await readFile(file));
-      }
-      return { stdout: "", stderr: "" };
-    }
-    if (args[0] === "release" && args[1] === "download") {
-      const tag = args[2];
-      const pattern = args[args.indexOf("--pattern") + 1];
-      const destination = args[args.indexOf("--dir") + 1];
-      const matches = [...this.assets(tag)].filter(([name]) => globMatches(name, pattern));
-      if (matches.length === 0) throw commandError("no assets to download");
-      await mkdir(destination, { recursive: true });
-      for (const [name, asset] of matches) await writeFile(path.join(destination, name), asset.bytes);
-      return { stdout: "", stderr: "" };
-    }
-    if (args[0] === "api" && args.some((value) => value.includes("releases?per_page=100"))) {
-      const tag = [...this.releases.keys()].find((candidate) => args.at(-1).includes(JSON.stringify(candidate)));
-      return { stdout: tag ? `${[...this.releases.keys()].indexOf(tag) + 1}\n` : "", stderr: "" };
-    }
-    if (args[0] === "api" && args.some((value) => /releases\/\d+\/assets/.test(value))) {
-      const id = Number(args.find((value) => /releases\/\d+\/assets/.test(value)).match(/releases\/(\d+)/)[1]);
-      const tag = [...this.releases.keys()][id - 1];
-      return { stdout: [...this.assets(tag)].map(([name, asset]) => `${asset.id}\t${name}`).join("\n") + "\n", stderr: "" };
-    }
-    if (args[0] === "api" && args.includes("DELETE")) {
-      const id = Number(args.find((value) => value.includes("/assets/")).split("/").at(-1));
-      for (const assets of this.releases.values()) for (const [name, asset] of assets) if (asset.id === id) assets.delete(name);
-      return { stdout: "", stderr: "" };
-    }
-    throw new Error(`Unexpected gh arguments: ${args.join(" ")}`);
   }
 }
 
-function globMatches(name, pattern) {
-  if (!pattern.includes("*")) return name === pattern;
-  const [prefix, suffix] = pattern.split("*");
-  return name.startsWith(prefix) && name.endsWith(suffix);
+class CountingGitHubApi {
+  constructor() {
+    this.requests = [];
+    this.assets = new Map();
+    this.nextAssetId = 1;
+    this.release = {
+      id: 1,
+      tag_name: "market-history-staging",
+      draft: true,
+    };
+  }
+
+  count(method) {
+    return this.requests.filter((request) => request.method === method).length;
+  }
+
+  async fetch(value, options = {}) {
+    const url = new URL(value);
+    const method = options.method ?? "GET";
+    this.requests.push({ method, url: url.toString() });
+    if (method === "GET" && url.pathname === "/repos/owner/data/releases") {
+      return jsonResponse([this.release]);
+    }
+    if (method === "GET" && url.pathname === "/repos/owner/data/releases/1/assets") {
+      return jsonResponse([...this.assets.values()].map(({ bytes, ...asset }) => asset));
+    }
+    if (method === "POST" && url.hostname === "uploads.github.com") {
+      const chunks = [];
+      for await (const chunk of options.body) chunks.push(Buffer.from(chunk));
+      const bytes = Buffer.concat(chunks);
+      const name = url.searchParams.get("name");
+      const asset = {
+        id: this.nextAssetId++,
+        name,
+        size: bytes.length,
+        state: "uploaded",
+        digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+        bytes,
+      };
+      this.assets.set(name, asset);
+      if (this.loseNextUploadResponse) {
+        this.loseNextUploadResponse = false;
+        throw new TypeError("simulated lost upload response");
+      }
+      const { bytes: ignored, ...metadata } = asset;
+      return jsonResponse(metadata, 201);
+    }
+    if (method === "DELETE" && url.pathname.startsWith("/repos/owner/data/releases/assets/")) {
+      const id = Number(url.pathname.split("/").at(-1));
+      for (const [name, asset] of this.assets) if (asset.id === id) this.assets.delete(name);
+      return new Response(null, { status: 204 });
+    }
+    return jsonResponse({ message: `Unhandled test request: ${method} ${url}` }, 500);
+  }
 }
 
-function commandError(message) {
-  const error = new Error(message);
-  error.code = 1;
-  error.stderr = message;
-  return error;
+function jsonResponse(value, status = 200, headers = {}) {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "content-type": "application/json", ...headers },
+  });
 }

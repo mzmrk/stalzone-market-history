@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { createGunzip, createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
 import { validateRegionArchive } from "./archive.mjs";
+import { GitHubReleaseClient } from "./github-release-client.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -18,16 +19,14 @@ export class GitHubReleaseStore {
     stableTag = "market-history-latest",
     stagingTag = "market-history-staging",
     execFileImpl = execFileAsync,
-    sleepImpl = sleep,
-    deleteRetryDelaysMs = [1_000, 2_000, 4_000, 8_000],
+    releaseClient,
   }) {
     if (!repository) throw new Error("GitHub release storage requires a repository name.");
     this.repository = repository;
     this.stableTag = stableTag;
     this.stagingTag = stagingTag;
     this.execFile = execFileImpl;
-    this.sleep = sleepImpl;
-    this.deleteRetryDelaysMs = deleteRetryDelaysMs;
+    this.releaseClient = releaseClient ?? new GitHubReleaseClient({ repository, sleepImpl: sleep });
     this.stableStates = new Map();
     this.stagingStates = new Map();
   }
@@ -71,7 +70,7 @@ export class GitHubReleaseStore {
         const assetName = `checkpoint-${region}-${safeName(artifactId)}-${digest.slice(0, 12)}-${timestamp}.jsonl.gz`;
         const assetFile = path.join(temporary, assetName);
         await copyFile(compressed, assetFile);
-        await this.uploadVerifiedImmutable({ tag: this.stagingTag, file: assetFile, digest, directory: temporary });
+        await this.uploadVerifiedImmutable({ tag: this.stagingTag, file: assetFile, digest });
         artifacts[artifactId] = { name: assetName, sha256: digest };
       }
 
@@ -100,7 +99,7 @@ export class GitHubReleaseStore {
       const markerName = `checkpoint-session-${region}-r${String(revision).padStart(6, "0")}-${markerDigest.slice(0, 12)}-${timestamp}.json`;
       const markerFile = path.join(temporary, markerName);
       await writeFile(markerFile, markerText);
-      await this.uploadVerifiedImmutable({ tag: this.stagingTag, file: markerFile, digest: markerDigest, directory: temporary });
+      await this.uploadVerifiedImmutable({ tag: this.stagingTag, file: markerFile, digest: markerDigest });
 
       const current = { marker, markerName };
       await this.cleanupStagingAssets({ current, previous: sameSession ? previous : null, region });
@@ -143,8 +142,8 @@ export class GitHubReleaseStore {
         throw new Error("The separately published manifest does not exactly match the manifest inside the archive.");
       }
 
-      await this.uploadVerifiedImmutable({ tag: this.stableTag, file: archiveAsset, digest, directory: temporary });
-      await this.uploadVerifiedImmutable({ tag: this.stableTag, file: manifestAsset, digest: manifestDigest, directory: temporary });
+      await this.uploadVerifiedImmutable({ tag: this.stableTag, file: archiveAsset, digest });
+      await this.uploadVerifiedImmutable({ tag: this.stableTag, file: manifestAsset, digest: manifestDigest });
 
       const marker = {
         schemaVersion: 2,
@@ -161,7 +160,7 @@ export class GitHubReleaseStore {
       const markerName = `generation-${region}-${markerDigest.slice(0, 12)}-${timestamp}.json`;
       const markerFile = path.join(temporary, markerName);
       await writeFile(markerFile, markerText);
-      await this.uploadVerifiedImmutable({ tag: this.stableTag, file: markerFile, digest: markerDigest, directory: temporary });
+      await this.uploadVerifiedImmutable({ tag: this.stableTag, file: markerFile, digest: markerDigest });
 
       const current = { archivePath: archiveAsset, marker, markerName };
       const resolved = await this.downloadLatestStableGeneration({ directory: path.join(temporary, "committed"), region });
@@ -275,16 +274,15 @@ export class GitHubReleaseStore {
     }
   }
 
-  async uploadVerifiedImmutable({ tag, file, digest, directory }) {
+  async uploadVerifiedImmutable({ tag, file, digest }) {
     const name = path.basename(file);
     const assets = await this.assetsForTag(tag);
-    if (!assets.some((asset) => asset.name === name)) {
-      await this.execFile("gh", ["release", "upload", tag, file, "--repo", this.repository]);
+    const asset = assets.find((candidate) => candidate.name === name)
+      ?? await this.releaseClient.uploadAsset(tag, file);
+    const size = (await stat(file)).size;
+    if (asset.state !== "uploaded" || asset.size !== size || asset.digest !== `sha256:${digest}`) {
+      throw new Error(`Release asset failed GitHub upload verification: ${name}.`);
     }
-    const verification = path.join(directory, `verify-${hashBytes(`${tag}:${name}`).slice(0, 12)}`);
-    await mkdir(verification, { recursive: true });
-    if (!(await this.download(tag, name, verification))) throw new Error(`Uploaded release asset is missing: ${name}.`);
-    if (await hashFile(path.join(verification, name)) !== digest) throw new Error(`Release asset failed SHA-256 verification: ${name}.`);
   }
 
   async cleanupStableAssets({ current, previous, region }) {
@@ -318,73 +316,26 @@ export class GitHubReleaseStore {
   }
 
   async ensureRelease({ draft, notes, tag, title }) {
-    if (await this.releaseExists(tag)) return;
-    const args = ["release", "create", tag, "--repo", this.repository, "--title", title, "--notes", notes];
-    if (draft) args.push("--draft");
-    await this.execFile("gh", args);
+    await this.releaseClient.ensureRelease({ draft, notes, tag, title });
   }
 
   async releaseExists(tag) {
-    try {
-      await this.execFile("gh", ["release", "view", tag, "--repo", this.repository]);
-      return true;
-    } catch (error) {
-      if (error?.code === 1) return false;
-      throw error;
-    }
+    return this.releaseClient.releaseExists(tag);
   }
 
   async download(tag, pattern, directory) {
-    try {
-      await mkdir(directory, { recursive: true });
-      if (!pattern.includes("*") && await exists(path.join(directory, pattern))) return true;
-      await this.execFile("gh", ["release", "download", tag, "--pattern", pattern, "--dir", directory, "--repo", this.repository]);
-      return true;
-    } catch (error) {
-      if (error?.code === 1 && /no files matched|no assets (?:match|to download)|not found/i.test(`${error.stderr ?? ""} ${error.stdout ?? ""}`)) return false;
-      throw error;
-    }
+    if (pattern.includes("*")) throw new Error("Wildcard release downloads are not supported.");
+    return this.releaseClient.downloadAsset(tag, pattern, directory);
   }
 
   async assetsForTag(tag) {
     if (!(await this.releaseExists(tag))) return [];
-    return this.releaseAssets(await this.releaseId(tag));
-  }
-
-  async releaseId(tag) {
-    const { stdout } = await this.execFile("gh", ["release", "view", tag, "--repo", this.repository, "--json", "apiUrl", "--jq", ".apiUrl"]);
-    const match = stdout.trim().match(/\/releases\/(\d+)$/);
-    if (!match) throw new Error(`GitHub release has an invalid API URL: ${tag}.`);
-    return match[1];
-  }
-
-  async releaseAssets(releaseId) {
-    const { stdout } = await this.execFile("gh", ["api", "--paginate", `repos/${this.repository}/releases/${releaseId}/assets?per_page=100`, "--jq", ".[] | [.id, .name] | @tsv"]);
-    return stdout.split("\n").filter(Boolean).map((line) => {
-      const [id, name] = line.split("\t");
-      return { id: Number(id), name };
-    });
+    return this.releaseClient.listAssets(tag);
   }
 
   async deleteAsset(assetId) {
-    const endpoint = `repos/${this.repository}/releases/assets/${assetId}`;
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        await this.execFile("gh", ["api", "--silent", "--method", "DELETE", endpoint]);
-        return;
-      } catch (error) {
-        if (isNotFound(error)) return;
-        if (attempt >= this.deleteRetryDelaysMs.length) throw error;
-        const delay = this.deleteRetryDelaysMs[attempt];
-        console.warn(`Release asset ${assetId} deletion failed; retrying in ${delay} ms.`);
-        await this.sleep(delay);
-      }
-    }
+    await this.releaseClient.deleteAsset(assetId);
   }
-}
-
-function isNotFound(error) {
-  return /\bHTTP\s*404\b/i.test(`${error?.message ?? ""} ${error?.stdout ?? ""} ${error?.stderr ?? ""}`);
 }
 
 function validateStableMarker(marker, region) {
@@ -469,13 +420,4 @@ function hashBytes(value) {
 
 async function hashFile(file) {
   return createHash("sha256").update(await readFile(file)).digest("hex");
-}
-
-async function exists(file) {
-  try {
-    await access(file);
-    return true;
-  } catch {
-    return false;
-  }
 }
